@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: transparent;
+        color: inherit;
+      }
+      .player {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 10px 0 2px;
+      }
+      .meta {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 8px;
+        font-size: 13px;
+      }
+      .speaker {
+        font-weight: 700;
+      }
+      .status {
+        opacity: 0.72;
+        white-space: nowrap;
+      }
+      .text {
+        margin-bottom: 10px;
+        line-height: 1.55;
+        font-size: 14px;
+        overflow-wrap: anywhere;
+      }
+      audio {
+        width: 100%;
+        display: block;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      button {
+        appearance: none;
+        border: 1px solid rgba(128, 128, 128, 0.45);
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        padding: 6px 10px;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.45;
+      }
+      .primary {
+        background: rgba(51, 112, 255, 0.12);
+        border-color: rgba(51, 112, 255, 0.45);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="player">
+      <div class="meta">
+        <div class="speaker" id="speaker">No audio</div>
+        <div class="status" id="status">idle</div>
+      </div>
+      <div class="text" id="text"></div>
+      <audio id="audio" controls preload="auto"></audio>
+      <div class="controls">
+        <button id="startAudio" class="primary" type="button">Start audio</button>
+        <button id="pause" type="button">Pause</button>
+        <button id="resume" type="button">Resume</button>
+        <button id="skip" type="button">Skip</button>
+      </div>
+    </div>
+    <script>
+      const audio = document.getElementById("audio");
+      const speaker = document.getElementById("speaker");
+      const statusEl = document.getElementById("status");
+      const textEl = document.getElementById("text");
+      const startAudioButton = document.getElementById("startAudio");
+      const pauseButton = document.getElementById("pause");
+      const resumeButton = document.getElementById("resume");
+      const skipButton = document.getElementById("skip");
+
+      let args = {
+        queue: [],
+        queue_version: "",
+        autoplay: false,
+        start_delay_seconds: 0,
+        gap_seconds: 1.2,
+      };
+      let currentIndex = 0;
+      let currentKey = "";
+      let queueVersion = "";
+      let playTimer = null;
+      let eventCounter = 0;
+      let audioUnlocked = false;
+      let continuousPlaybackEnabled = false;
+      let lastBlockedKey = "";
+      let pendingPlayKey = "";
+      let playingKey = "";
+      let loadedSrc = "";
+
+      function post(type, payload) {
+        window.parent.postMessage(
+          Object.assign({ isStreamlitMessage: true, type }, payload || {}),
+          "*",
+        );
+      }
+
+      function setFrameHeight() {
+        post("streamlit:setFrameHeight", {
+          height: document.documentElement.scrollHeight,
+        });
+      }
+
+      function setComponentValue(value) {
+        post("streamlit:setComponentValue", { value });
+      }
+
+      function itemKey(item) {
+        if (!item) {
+          return "";
+        }
+        return `${item.turn_id}:${item.revision_id}`;
+      }
+
+      function currentItem() {
+        return (args.queue || [])[currentIndex] || null;
+      }
+
+      function emit(eventType, extra) {
+        emitForItem(currentItem(), eventType, extra);
+      }
+
+      function emitForItem(item, eventType, extra) {
+        if (!item) {
+          return;
+        }
+        eventCounter += 1;
+        setComponentValue({
+          event_id: `${item.queue_version}:${item.turn_id}:${item.revision_id}:${eventType}:${Date.now()}:${eventCounter}`,
+          event_type: eventType,
+          turn_id: item.turn_id,
+          revision_id: item.revision_id,
+          queue_version: item.queue_version,
+          current_seconds: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
+          played_seconds: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
+          duration_seconds: Number.isFinite(audio.duration)
+            ? audio.duration
+            : item.duration_hint_seconds || 0,
+          error_message: "",
+          ...(extra || {}),
+        });
+      }
+
+      function preloadFutureItems() {
+        (args.queue || []).slice(currentIndex + 1).forEach((item) => {
+          const preload = new Audio();
+          preload.preload = "auto";
+          preload.src = item.audio_src;
+        });
+      }
+
+      function renderCurrentItem() {
+        const item = currentItem();
+        if (!item) {
+          speaker.textContent = "No audio";
+          statusEl.textContent = "idle";
+          textEl.textContent = "";
+          audio.removeAttribute("src");
+          audio.load();
+          startAudioButton.disabled = true;
+          setFrameHeight();
+          return;
+        }
+        speaker.textContent = `Turn ${item.turn_id}: ${item.speaker_name} / ${item.speaker_role}`;
+        textEl.textContent = item.text || "";
+        statusEl.textContent = audio.paused
+          ? audioUnlocked
+            ? "ready"
+            : "click Start audio once"
+          : "playing";
+        startAudioButton.disabled = !audio.paused;
+        setFrameHeight();
+      }
+
+      function loadCurrentItem({ keepIfSame } = { keepIfSame: true }) {
+        const item = currentItem();
+        const nextKey = itemKey(item);
+        const nextSrc = item ? item.audio_src || "" : "";
+        if (!item) {
+          currentKey = "";
+          loadedSrc = "";
+          pendingPlayKey = "";
+          playingKey = "";
+          renderCurrentItem();
+          return;
+        }
+        if (keepIfSame && currentKey === nextKey && loadedSrc === nextSrc && audio.src) {
+          renderCurrentItem();
+          preloadFutureItems();
+          return;
+        }
+        if (currentKey !== nextKey) {
+          if (pendingPlayKey !== nextKey) {
+            pendingPlayKey = "";
+          }
+          if (playingKey !== nextKey) {
+            playingKey = "";
+          }
+        }
+        currentKey = nextKey;
+        loadedSrc = nextSrc;
+        audio.src = item.audio_src;
+        audio.load();
+        renderCurrentItem();
+        preloadFutureItems();
+      }
+
+      function clearPlayTimer() {
+        if (playTimer !== null) {
+          window.clearTimeout(playTimer);
+          playTimer = null;
+        }
+      }
+
+      function attemptPlay({ userGesture, expectedKey } = { userGesture: false, expectedKey: "" }) {
+        const item = currentItem();
+        if (!item) {
+          return;
+        }
+        const key = itemKey(item);
+        if (expectedKey && key !== expectedKey) {
+          if (pendingPlayKey === expectedKey) {
+            pendingPlayKey = "";
+          }
+          return;
+        }
+        if (!userGesture && playingKey === key && !audio.paused && !audio.ended) {
+          if (pendingPlayKey === key) {
+            pendingPlayKey = "";
+          }
+          return;
+        }
+        if (userGesture) {
+          audioUnlocked = true;
+          continuousPlaybackEnabled = true;
+          lastBlockedKey = "";
+          pendingPlayKey = "";
+        }
+        audio.play()
+          .then(() => {
+            audioUnlocked = true;
+            if (pendingPlayKey === key) {
+              pendingPlayKey = "";
+            }
+            playingKey = key;
+            lastBlockedKey = "";
+            statusEl.textContent = "playing";
+            startAudioButton.disabled = true;
+          })
+          .catch((error) => {
+            if (pendingPlayKey === key) {
+              pendingPlayKey = "";
+            }
+            const errorName = error && error.name ? error.name : "";
+            if (errorName === "NotAllowedError") {
+              lastBlockedKey = itemKey(item);
+              audioUnlocked = false;
+              statusEl.textContent = "click Start audio once";
+              startAudioButton.disabled = false;
+              setFrameHeight();
+              return;
+            }
+            emit("playback_error", {
+              error_message: error && error.message ? error.message : String(error),
+            });
+          });
+      }
+
+      function playCurrent(delaySeconds) {
+        const item = currentItem();
+        const shouldPlay = args.autoplay || continuousPlaybackEnabled;
+        if (!item || !shouldPlay) {
+          return;
+        }
+        const key = itemKey(item);
+        if (pendingPlayKey === key || (playingKey === key && !audio.paused && !audio.ended)) {
+          return;
+        }
+        clearPlayTimer();
+        pendingPlayKey = key;
+        const delayMs = Math.max(0, Number(delaySeconds || 0) * 1000);
+        playTimer = window.setTimeout(() => {
+          if (lastBlockedKey === key && !audioUnlocked) {
+            if (pendingPlayKey === key) {
+              pendingPlayKey = "";
+            }
+            statusEl.textContent = "click Start audio once";
+            startAudioButton.disabled = false;
+            return;
+          }
+          attemptPlay({ userGesture: false, expectedKey: key });
+        }, delayMs);
+      }
+
+      function applyArgs(nextArgs) {
+        const previousItemKey = currentKey;
+        const previousVersion = queueVersion;
+        args = Object.assign({}, args, nextArgs || {});
+        queueVersion = args.queue_version || "";
+
+        const queue = args.queue || [];
+        let nextIndex = queue.findIndex((item) => itemKey(item) === previousItemKey);
+        const preservedCurrentItem = nextIndex >= 0 && previousItemKey !== "";
+        if (nextIndex < 0) {
+          nextIndex = 0;
+        }
+        currentIndex = nextIndex;
+
+        loadCurrentItem({
+          keepIfSame: preservedCurrentItem || previousVersion === queueVersion || nextIndex > 0,
+        });
+        if (!preservedCurrentItem) {
+          playCurrent(args.start_delay_seconds || 0);
+        }
+      }
+
+      audio.addEventListener("play", () => {
+        audioUnlocked = true;
+        continuousPlaybackEnabled = true;
+        playingKey = itemKey(currentItem());
+        if (pendingPlayKey === playingKey) {
+          pendingPlayKey = "";
+        }
+        lastBlockedKey = "";
+        statusEl.textContent = "playing";
+        startAudioButton.disabled = true;
+      });
+
+      audio.addEventListener("pause", () => {
+        const key = itemKey(currentItem());
+        if (!audio.ended && playingKey === key) {
+          playingKey = "";
+        }
+        statusEl.textContent = "paused";
+        startAudioButton.disabled = false;
+      });
+
+      audio.addEventListener("ended", () => {
+        const endedItem = currentItem();
+        const endedKey = itemKey(endedItem);
+        if (pendingPlayKey === endedKey) {
+          pendingPlayKey = "";
+        }
+        if (playingKey === endedKey) {
+          playingKey = "";
+        }
+        const duration = endedItem ? endedItem.duration_hint_seconds || audio.duration || 0 : 0;
+        if (currentIndex + 1 < (args.queue || []).length) {
+          currentIndex += 1;
+          loadCurrentItem({ keepIfSame: false });
+          playCurrent(args.gap_seconds || 0);
+        }
+        emitForItem(endedItem, "playback_ended", {
+          current_seconds: duration,
+          played_seconds: duration,
+          duration_seconds: duration,
+        });
+      });
+
+      audio.addEventListener("error", () => {
+        emit("playback_error", { error_message: "audio_element_error" });
+      });
+
+      startAudioButton.addEventListener("click", () => {
+        attemptPlay({ userGesture: true, expectedKey: itemKey(currentItem()) });
+      });
+
+      pauseButton.addEventListener("click", () => {
+        continuousPlaybackEnabled = false;
+        clearPlayTimer();
+        pendingPlayKey = "";
+        audio.pause();
+      });
+
+      resumeButton.addEventListener("click", () => {
+        attemptPlay({ userGesture: true, expectedKey: itemKey(currentItem()) });
+      });
+
+      skipButton.addEventListener("click", () => {
+        const duration = Number.isFinite(audio.duration)
+          ? audio.duration
+          : (currentItem() || {}).duration_hint_seconds || 0;
+        emit("playback_skipped", {
+          current_seconds: audio.currentTime || 0,
+          played_seconds: audio.currentTime || 0,
+          duration_seconds: duration,
+        });
+        audio.pause();
+        if (currentIndex + 1 < (args.queue || []).length) {
+          currentIndex += 1;
+          loadCurrentItem({ keepIfSame: false });
+          playCurrent(args.gap_seconds || 0);
+        }
+      });
+
+      window.addEventListener("message", (event) => {
+        const message = event.data || {};
+        if (message.type !== "streamlit:render") {
+          return;
+        }
+        applyArgs(message.args || {});
+      });
+
+      post("streamlit:componentReady", { apiVersion: 1 });
+      setFrameHeight();
+    </script>
+  </body>
+</html>

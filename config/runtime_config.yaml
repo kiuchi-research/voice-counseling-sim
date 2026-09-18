@@ -1,0 +1,137 @@
+runtime:
+  engine: asyncio
+  backend: openai
+  control_api: fastapi
+  control_host: 127.0.0.1
+  control_port: 8765
+  monitor_transport: websocket
+  audio_delivery_mode: real_time
+  turn_boundary_policy: explicit_commit
+  speaker_selection_policy: turn_boundary_timing
+  overlap_grace_ms: 200
+  unresolved_overlap_limit_ms: 800
+  turn_taking_signal_min_chars: 40
+  turn_taking_decision_timeout_ms: 2000
+  turn_taking_max_reconsider_rounds: 0
+  conversation_context_recent_turns: 8
+  session_summary_trigger_completed_turns: 12
+  session_summary_update_interval_turns: 6
+  prompt_director_enabled: true
+  prompt_director_max_retries: 2
+  max_turns: 200
+  closing_start_elapsed_seconds: 120
+  force_stop_after_closing_turns: 3
+  initial_client_transcript: 娘のことで相談があります
+
+audio:
+  hot_path_format: pcm
+  sample_rate: 24000
+  sample_width_bits: 16
+  channels: 1
+  speaker_gains:
+    counselor: 0.6
+    client: 0.6
+  turn_log_format: wav
+  archive_format: flac
+  public_export_format: mp3
+  create_public_mp3: false
+
+openai:
+  llm_model: "${OPENAI_TEXT_MODEL:-gpt-5.1}"
+  timing_llm_model: "${OPENAI_TIMING_MODEL:-gpt-5.4-mini}"
+  timing_llm_reasoning_effort: none
+  summary_llm_model: "${OPENAI_SUMMARY_MODEL:-gpt-5.4-mini}"
+  summary_llm_reasoning_effort: none
+  prompting_llm_model: "${OPENAI_PROMPTING_MODEL:-gpt-5.4-mini}"
+  prompting_llm_reasoning_effort: low
+  tts_model: "${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}"
+  realtime_model: "${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}"
+  tts_voice: coral
+  counselor_tts_voice: shimmer
+  client_tts_voice: marin
+  counselor_realtime_output_speed: 1.05
+  client_realtime_output_speed: 0.9
+  tts_instructions: "落ち着いた自然な速度で、文と文の間に少し余白を取り、急がずに話してください。"
+  tts_response_format: pcm
+  stt_model: "${OPENAI_STT_MODEL:-gpt-4o-transcribe}"
+  realtime_transcription_format:
+    type: audio/pcm
+    rate: 24000
+  realtime_output_format:
+    type: audio/pcm
+    rate: 24000
+
+# Speech, independent transcription and runtime text routes default to Azure.
+ai:
+  default_provider: openai
+  providers:
+    openai:
+      kind: openai
+      auth: api_key
+      api_key_env: OPENAI_API_KEY
+    azure_eastus2:
+      kind: azure_openai
+      auth: api_key
+      endpoint_env: AZURE_OPENAI_ENDPOINT
+      api_key_env: AZURE_OPENAI_API_KEY
+  routes:
+    realtime_speech:
+      provider: azure_eastus2
+      targets:
+        openai:
+          model: "${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}"
+        azure_eastus2:
+          deployment: "${AZURE_OPENAI_REALTIME_DEPLOYMENT:-}"
+    realtime_transcription:
+      provider: azure_eastus2
+      targets:
+        openai:
+          model: "${OPENAI_STT_MODEL:-gpt-4o-transcribe}"
+        azure_eastus2:
+          deployment: "${AZURE_OPENAI_STT_DEPLOYMENT:-}"
+    conversation_text:
+      provider: azure_eastus2
+      targets:
+        openai:
+          model: "${OPENAI_TEXT_MODEL:-gpt-5.1}"
+        azure_eastus2:
+          deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
+    turn_timing:
+      provider: azure_eastus2
+      targets:
+        openai:
+          model: "${OPENAI_TIMING_MODEL:-gpt-5.4-mini}"
+        azure_eastus2:
+          deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
+    session_summary:
+      provider: azure_eastus2
+      targets:
+        openai:
+          model: "${OPENAI_SUMMARY_MODEL:-gpt-5.4-mini}"
+        azure_eastus2:
+          deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
+    prompt_director:
+      provider: azure_eastus2
+      targets:
+        openai:
+          model: "${OPENAI_PROMPTING_MODEL:-gpt-5.4-mini}"
+        azure_eastus2:
+          deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
+
+paths:
+  sessions_dir: results/sessions
+  runtime_sessions_dir: results/runtime_sessions
+  replay_sessions_dir: results/replay_sessions
+
+latency:
+  llm_max_output_tokens:
+  timing_llm_max_output_tokens: 128
+  summary_llm_max_output_tokens: 2048
+  prompting_llm_max_output_tokens: 8192
+  tts_chunk_comma_min_chars: 18
+  tts_chunk_soft_max_chars: 36
+  tts_target_chunk_duration_ms: 40
+  tts_sdk_chunk_size:
+  stt_partial_prefetch: false
+  stt_partial_prefetch_min_chars: 8
+  realtime_api_centered_mode: true

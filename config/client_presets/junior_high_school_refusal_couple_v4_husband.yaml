@@ -1,0 +1,13 @@
+schema_version: 1
+preset_id: junior_high_school_refusal_couple_v4_husband
+display_name: 中2男子不登校夫婦（夫）
+description: 妻プリセットと同じ長男の不登校事例で、1クライアントでは夫、2クライアントでは夫と妻を使用する初回夫婦面接
+read_only: true
+
+extends: junior_high_school_refusal_couple_v3
+participant_mapping:
+  client_a: client_b
+  client_b: client_a
+initial_transcripts:
+  client_a: 中学2年生の息子が4か月ほど前からほとんど学校に行けなくなって、学校へ戻るために親として何ができるのか相談に来ました
+  client_b: ""
