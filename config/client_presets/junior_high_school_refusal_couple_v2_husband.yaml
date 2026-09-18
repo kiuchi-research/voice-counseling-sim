@@ -1,0 +1,13 @@
+schema_version: 1
+preset_id: junior_high_school_refusal_couple_v2_husband
+display_name: 中2不登校夫婦（夫）
+description: 妻プリセットと同じ事例内容で、1クライアントでは夫、2クライアントでは夫と妻を使用する中学2年生の不登校相談
+read_only: true
+
+extends: junior_high_school_refusal_couple_v1
+participant_mapping:
+  client_a: client_b
+  client_b: client_a
+initial_transcripts:
+  client_a: 今日は中2の娘の対応について相談に来ました
+  client_b: ""

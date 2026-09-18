@@ -1,0 +1,9 @@
+preset_id: counselor_calm_neutral
+display_name: 落ち着いたカウンセラー
+tts_model: "${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}"
+fallback_tts_model: "${OPENAI_TTS_FALLBACK_MODEL:-tts-1}"
+voice: coral
+fallback_voice: alloy
+instructions: 落ち着いた、温かい、性別中立的な印象で、少しゆっくり話してください。
+speed_hint: slow
+response_format: mp3

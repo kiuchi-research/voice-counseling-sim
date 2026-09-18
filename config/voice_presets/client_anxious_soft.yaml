@@ -1,0 +1,9 @@
+preset_id: client_anxious_soft
+display_name: 少し不安そうなクライアント
+tts_model: "${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}"
+fallback_tts_model: "${OPENAI_TTS_FALLBACK_MODEL:-tts-1}"
+voice: alloy
+fallback_voice: coral
+instructions: 落ち着いているが少し不安そうに、遠慮がちな印象で話してください。
+speed_hint: standard
+response_format: mp3

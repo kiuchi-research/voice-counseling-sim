@@ -1,0 +1,26 @@
+# IND voice counseling simulation dependencies.
+#
+# environment.yml is the canonical local development environment. This file is
+# kept for CI and simple pip-compatible installs.
+
+openai>=1.76.0
+streamlit>=1.44.0
+pydantic>=2.11.0
+requests>=2.31.0
+python-dateutil>=2.8.2
+python-dotenv>=1.0.0
+typing-extensions>=4.7.1
+pyyaml>=6.0.1
+pydub>=0.25.1
+mutagen>=1.47.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+websockets>=13.0
+
+# Test and CI tooling used by .github/workflows/reusable-python-checks.yml.
+pytest>=8.3.0
+pytest-cov>=5.0.0
+flake8>=7.0.0
+black>=24.0.0,<26.0.0
+setuptools>=68
+wheel>=0.40

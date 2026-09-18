@@ -1,0 +1,37 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install -e . --no-build-isolation
+      - name: Check environment
+        run: python utility/check_env.py --ci
+      - name: Python tests
+        run: python -m pytest -q
+      - name: JavaScript tests
+        run: node --test tests/runtime_audio_monitor_playback.test.cjs tests/runtime_audio_monitor_input.test.cjs

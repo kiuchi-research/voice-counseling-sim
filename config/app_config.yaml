@@ -1,0 +1,98 @@
+app:
+  name: Counseling Voice Demo
+  version: "0.2"
+  language: ja
+  default_mode: ai_counselor_ai_client
+  enabled_modes:
+    ai_counselor_ai_client: true
+    human_counselor_ai_client: true
+    ai_counselor_human_client: true
+  session_duration_audio_seconds: 1200
+  closing_start_audio_seconds: 120
+  farewell_after_turns: 2
+  optional_wall_clock_hard_stop_seconds: null
+  ahead_generation_turns: 2
+  show_clinical_disclaimer_in_ui: false
+  speak_clinical_disclaimer: false
+
+ui:
+  framework: streamlit
+  entrypoint: app/streamlit_app.py
+  single_projection_ui: true
+  separate_admin_screen: false
+  show_ai_voice_disclosure_in_ui: true
+  ai_voice_disclosure_text: 音声はAIにより生成されています。
+  collapse_unplayed_preview_by_default: true
+  show_future_generated_text_default: collapsed
+  settings_popup: true
+
+session:
+  target_audio_seconds: 900
+  closing_keep_audio_ready_turns: 1
+  lookahead_turns: 2
+
+openai:
+  text_generation_endpoint: /v1/responses
+  tts_endpoint: /v1/audio/speech
+  default_text_model: "${OPENAI_TEXT_MODEL:-gpt-5.1}"
+  default_text_reasoning_effort: "${OPENAI_TEXT_REASONING_EFFORT:-low}"
+  default_temperature: 0.4
+  default_evaluation_model: "${OPENAI_EVALUATION_MODEL:-gpt-5-nano}"
+  default_evaluation_reasoning_effort: "${OPENAI_EVALUATION_REASONING_EFFORT:-low}"
+  default_tts_model: "${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}"
+  fallback_tts_model: "${OPENAI_TTS_FALLBACK_MODEL:-tts-1}"
+  disallowed_tts_models:
+    - gpt-4o-mini-tts-2025-03-20
+  default_tts_voice: coral
+  fallback_tts_voice: alloy
+  allowed_tts_voices:
+    - alloy
+    - ash
+    - ballad
+    - cedar
+    - coral
+    - echo
+    - fable
+    - marin
+    - nova
+    - onyx
+    - shimmer
+    - verse
+  default_audio_format: mp3
+  low_latency_audio_format: wav
+  moderation_endpoint: /v1/moderations
+  moderation_model: omni-moderation-latest
+  use_conversation_state: false
+  use_previous_response_id: false
+  use_store_false_when_supported: true
+
+audio_player:
+  framework: streamlit
+  standard_audio_supports_python_events: false
+  use_custom_audio_player: true
+  dev_probe_audio_path: app/assets/dev_probe_tone.mp3
+
+audio_merge:
+  create_full_session_mp3: true
+  allow_cancel_full_mp3_creation: true
+  output_filename: session_full_public.mp3
+  include_skipped_partial_in_full_mp3: false
+  include_skipped_unplayed_in_full_mp3: false
+
+turn_policy:
+  invalidate_following_unplayed_on_edit: true
+  invalidate_following_unplayed_on_single_regenerate: true
+  allow_edit_played_turns: false
+  keep_invalidated_revisions: true
+
+replay:
+  enable_replay_mode: true
+  forbid_api_calls_in_replay: true
+
+paths:
+  profiles_dir: config/profiles
+  themes_dir: config/themes
+  voice_presets_dir: config/voice_presets
+  assets_dir: app/assets
+  sessions_dir: results/sessions
+  replay_sessions_dir: results/replay_sessions
