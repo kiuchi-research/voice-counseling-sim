@@ -7357,7 +7357,8 @@ def test_human_client_evaluation_does_not_use_simulated_client_or_call_models():
 def test_three_mode_settings_render_without_exposing_ai_client_fields():
     from streamlit.testing.v1 import AppTest
 
-    view = AppTest.from_file("app/streamlit_app.py", default_timeout=20).run()
+    app_path = Path(__file__).resolve().parents[1] / "app" / "streamlit_app.py"
+    view = AppTest.from_file(app_path, default_timeout=20).run()
     assert not view.exception
     assert not view.error
     for mode in [
