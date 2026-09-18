@@ -3,7 +3,8 @@
 # environment.yml is the canonical local development environment. This file is
 # kept for CI and simple pip-compatible installs.
 
-openai>=1.76.0
+openai>=1.76.0,<3
+httpx>=0.28.1,<1
 streamlit>=1.44.0
 pydantic>=2.11.0
 requests>=2.31.0

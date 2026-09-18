@@ -20,6 +20,8 @@ Python 3.11 と conda を使用します。以下は Linux / WSL の bash 向け
 
 リポジトリを clone または ZIP から展開し、そのディレクトリで実行してください。依存関係の正本は [`environment.yml`](environment.yml) です。`requirements.txt` は CI・互換用途です。
 
+OpenAI Python SDK は、現在の実装・テストに合わせて 3 未満に制限しています。SDK のメジャーバージョンを変更する場合は、HTTP クライアントを含む互換性の確認が必要です。
+
 ```bash
 cd voice-counseling-sim
 conda env create -f environment.yml

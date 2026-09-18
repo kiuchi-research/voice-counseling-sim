@@ -6,7 +6,8 @@ dependencies:
   - python=3.11
   - pip
   - pip:
-    - openai>=1.76.0
+    - openai>=1.76.0,<3
+    - httpx>=0.28.1,<1
     - streamlit>=1.44.0
     - pydantic>=2.11.0
     - requests>=2.31.0
