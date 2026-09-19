@@ -6,6 +6,8 @@ import random
 import time
 
 import pytest
+import httpx
+from openai import APIError
 
 from counseling_voice_demo.runtime.agents import FakeAgent, StreamingAgent
 from counseling_voice_demo.runtime.controller import (
@@ -2865,16 +2867,19 @@ def test_client_director_bypass_includes_prefetch_and_preserves_turn_instruction
 
 
 class ExcerptRepairLLM:
+
     def __init__(
         self,
         failed_reviews: int,
         successful_reviews_first: int = 0,
         *,
         semantic: bool = False,
+        transport: bool = False,
     ) -> None:
         self.failed_reviews = failed_reviews
         self.successful_reviews_first = successful_reviews_first
         self.semantic = semantic
+        self.transport = transport
         self.calls = []
 
     async def stream_text(self, **kwargs):
@@ -2887,6 +2892,14 @@ class ExcerptRepairLLM:
             self.successful_reviews_first -= 1
         if invalid:
             self.failed_reviews -= 1
+        if invalid and self.transport:
+            yield "discard interrupted JSON"
+            raise APIError(
+                "upstream connect error or disconnect/reset before headers. "
+                "reset reason: connection termination",
+                request=httpx.Request("POST", "https://example.invalid/responses"),
+                body=None,
+            )
         yield json.dumps(
             {
                 "context_basis": "共有履歴のみ参照。",
@@ -2959,19 +2972,90 @@ def test_runtime_recovers_review_issues_and_saves_attempts_internally(
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("stop_instead_of_resume", [False, True])
-@pytest.mark.parametrize("completed_before_failure", [0, 1])
-@pytest.mark.parametrize("semantic", [False, True])
-def test_director_exhaustion_keeps_session_resumable_or_stoppable(
-    tmp_path, stop_instead_of_resume, completed_before_failure, semantic
+@pytest.mark.parametrize("stop_during_retry", [False, True])
+def test_runtime_transport_retry_recovers_or_stops_without_losing_history(
+    tmp_path, monkeypatch, stop_during_retry
 ):
     from counseling_voice_demo.runtime.control_api import RuntimeControlService
 
     async def scenario():
+        waiting = asyncio.Event()
+
+        async def wait(delay):
+            waiting.set()
+            if stop_during_retry:
+                await asyncio.Event().wait()
+
+        monkeypatch.setattr("counseling_voice_demo.runtime.prompt_director.sleep", wait)
+        llm = ExcerptRepairLLM(failed_reviews=1, transport=True)
+        runtime = ConversationRuntime(
+            config=RuntimeConfig(
+                max_turns=1, speaker_selection_policy="fixed_round_robin"
+            ),
+            prompt_director=PromptDirector(llm),
+            sessions_dir=tmp_path,
+        )
+        service = RuntimeControlService(lambda: runtime)
+        await service.start()
+        task = service._task
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=3)
+            if stop_during_retry:
+                previous_turns = list(runtime.turns)
+                assert len(previous_turns) == 1
+                await service.stop()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=3)
+                assert runtime.turns == previous_turns
+                assert len(llm.calls) == 2
+                assert runtime.status.phase is RuntimePhase.STOPPED
+            else:
+                await asyncio.wait_for(task, timeout=3)
+                assert runtime.status.phase is RuntimePhase.COMPLETED
+                assert len(runtime.turns) == 2
+                assert len(llm.calls) == 3
+            text = runtime.logger.paths.events_jsonl.read_text()
+            assert "prompt_director_transport_retry" in text
+            assert "prompt_director_waiting_for_resume" not in text
+            assert "runtime_error" not in text
+            assert (
+                "discard interrupted JSON"
+                not in runtime.logger.paths.transcripts_jsonl.read_text()
+            )
+        finally:
+            await service.stop()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("stop_instead_of_resume", [False, True])
+@pytest.mark.parametrize("completed_before_failure", [0, 1])
+@pytest.mark.parametrize(
+    ("semantic", "transport"), [(False, False), (True, False), (False, True)]
+)
+def test_director_exhaustion_keeps_session_resumable_or_stoppable(
+    tmp_path,
+    stop_instead_of_resume,
+    completed_before_failure,
+    semantic,
+    transport,
+    monkeypatch,
+):
+    from counseling_voice_demo.runtime.control_api import RuntimeControlService
+
+    async def scenario():
+
+        async def no_delay(delay):
+            pass
+
+        monkeypatch.setattr(
+            "counseling_voice_demo.runtime.prompt_director.sleep", no_delay
+        )
         llm = ExcerptRepairLLM(
             failed_reviews=3,
             successful_reviews_first=completed_before_failure,
             semantic=semantic,
+            transport=transport,
         )
         runtime = ConversationRuntime(
             config=RuntimeConfig(
@@ -2988,7 +3072,11 @@ def test_director_exhaustion_keeps_session_resumable_or_stoppable(
                     await asyncio.sleep(0.001)
             status = await service.status()
             assert status.phase is RuntimePhase.PAUSED
-            assert status.pause_reason == "prompt_director_validation"
+            assert status.pause_reason == (
+                "prompt_director_transport"
+                if transport
+                else "prompt_director_validation"
+            )
             assert status.error_message is None
             completed_turns = 1 + 2 * completed_before_failure
             assert status.current_turn_id == completed_turns
@@ -3016,6 +3104,40 @@ def test_director_exhaustion_keeps_session_resumable_or_stoppable(
                 assert (
                     "runtime_error" not in runtime.logger.paths.events_jsonl.read_text()
                 )
+                if transport:
+                    records = [
+                        json.loads(line)
+                        for line in runtime.logger.paths.prompt_director_attempts_jsonl.read_text().splitlines()
+                    ]
+                    failures = [
+                        r["details"]
+                        for r in records
+                        if r["details"].get("transport_error")
+                    ]
+                    assert [r["will_retry"] for r in failures] == [True, True, False]
+                    assert all(r["response_json"] == "" for r in failures)
+                    assert (
+                        "discard interrupted JSON"
+                        not in runtime.logger.paths.transcripts_jsonl.read_text()
+                    )
+                    events = [
+                        json.loads(line)
+                        for line in runtime.logger.paths.events_jsonl.read_text().splitlines()
+                    ]
+                    assert (
+                        sum(
+                            e["event_type"] == "prompt_director_transport_retry"
+                            for e in events
+                        )
+                        == 2
+                    )
+                    assert (
+                        sum(
+                            e["event_type"] == "prompt_director_transport_exhausted"
+                            for e in events
+                        )
+                        == 1
+                    )
         finally:
             await service.stop()
             await runtime._cancel_prompt_director_tasks()
@@ -3023,10 +3145,22 @@ def test_director_exhaustion_keeps_session_resumable_or_stoppable(
     asyncio.run(scenario())
 
 
-def test_failed_speculative_director_does_not_pause_current_session(tmp_path):
+@pytest.mark.parametrize("transport", [False, True])
+def test_failed_speculative_director_does_not_pause_current_session(
+    tmp_path, transport, monkeypatch
+):
     async def scenario():
+
+        async def no_delay(delay):
+            pass
+
+        monkeypatch.setattr(
+            "counseling_voice_demo.runtime.prompt_director.sleep", no_delay
+        )
         runtime = ConversationRuntime(
-            prompt_director=PromptDirector(ExcerptRepairLLM(failed_reviews=3)),
+            prompt_director=PromptDirector(
+                ExcerptRepairLLM(failed_reviews=3, transport=transport)
+            ),
             sessions_dir=tmp_path,
         )
         runtime._phase = RuntimePhase.RUNNING

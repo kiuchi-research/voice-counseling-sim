@@ -10,13 +10,35 @@ from counseling_voice_demo.runtime.streaming_llm import (
     StreamingLLMError,
     build_responses_input,
     extract_text_delta,
+    is_retryable_stream_error,
 )
-
 
 class _TypedEvent:
     def __init__(self, *, type: str, delta: str | None = None) -> None:
         self.type = type
         self.delta = delta
+
+
+@pytest.mark.parametrize("event_type", ["error", "response.failed"])
+@pytest.mark.parametrize(
+    "code,retryable",
+    [
+        ("server_error", True),
+        ("misalignment_policy_violation", False),
+        ("invalid_request_error", False),
+    ],
+)
+def test_stream_error_preserves_code_for_retry_decision(event_type, code, retryable):
+    payload = {"error": {"message": "failure", "code": code}}
+    event = (
+        {"type": event_type, **payload}
+        if event_type == "error"
+        else {"type": event_type, "response": payload}
+    )
+    with pytest.raises(StreamingLLMError) as caught:
+        extract_text_delta(event)
+    assert caught.value.code == code
+    assert is_retryable_stream_error(caught.value) is retryable
 
 
 class _TypedError:

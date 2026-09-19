@@ -3,8 +3,12 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 
 import pytest
+import httpx
+from openai import APIError, APIConnectionError, APIStatusError, APITimeoutError
 
 from counseling_voice_demo.runtime.prompt_context import PublicHistoryMessage
 from counseling_voice_demo.runtime.prompt_director import (
@@ -114,6 +118,241 @@ def _request() -> PromptDirectorRequest:
         response_target="主な宛先はclient_b。",
         turn_specific_instructions="応答は短くする。",
     )
+
+
+def _upstream_error():
+    return APIError(
+        "upstream connect error or disconnect/reset before headers. "
+        "reset reason: connection termination",
+        request=httpx.Request("POST", "https://example.invalid/responses"),
+        body=None,
+    )
+
+
+@pytest.mark.parametrize("fail_review", [False, True])
+def test_director_retries_transient_stream_without_reusing_partial_text(
+    monkeypatch, fail_review
+):
+    async def scenario():
+        delays = []
+        attempts = []
+
+        async def wait(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr(
+            "counseling_voice_demo.runtime.prompt_director.sleep", wait, raising=False
+        )
+
+        class InterruptedLLM(_RecordingLLM):
+            async def stream_text(self, **kwargs):
+                call = len(self.calls)
+                if call == int(fail_review):
+                    self.calls.append(kwargs)
+                    yield "partial JSON that must be discarded"
+                    raise _upstream_error()
+                async for part in super().stream_text(**kwargs):
+                    yield part
+
+        async def record(details):
+            attempts.append(details)
+
+        llm = InterruptedLLM(json.dumps(_payload(), ensure_ascii=False))
+        result = await PromptDirector(llm).create_directive(
+            _request(), on_attempt=record
+        )
+        assert result.response_example == _result().response_example
+        assert len(llm.calls) == 3
+        failed_index = int(fail_review)
+        assert llm.calls[failed_index] == llm.calls[failed_index + 1]
+        assert len(delays) == 1 and delays[0] > 0
+        failed = [item for item in attempts if item.get("transport_error")]
+        assert len(failed) == 1
+        assert failed[0]["stage"] == ("確認" if fail_review else "生成")
+        assert failed[0]["will_retry"] is True
+        assert failed[0]["response_json"] == ""
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("retry_limit", [0, 2])
+def test_director_transient_exhaustion_is_resumable(monkeypatch, retry_limit):
+    async def scenario():
+        calls = []
+        delays = []
+
+        async def wait(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr(
+            "counseling_voice_demo.runtime.prompt_director.sleep", wait, raising=False
+        )
+
+        class UnavailableLLM:
+            async def stream_text(self, **kwargs):
+                calls.append(kwargs)
+                yield "discard"
+                raise _upstream_error()
+
+        with pytest.raises(PromptDirectorError) as caught:
+            await PromptDirector(
+                UnavailableLLM(), max_retries=retry_limit
+            ).create_directive(_request())
+        assert caught.value.pause_reason == "prompt_director_transport"
+        assert isinstance(caught.value.__cause__, APIError)
+        assert len(calls) == retry_limit + 1
+        assert len(delays) == retry_limit
+        assert all(call == calls[0] for call in calls)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 429])
+def test_director_does_not_retry_permanent_api_failures(status):
+    async def scenario():
+        calls = []
+        request = httpx.Request("POST", "https://example.invalid/responses")
+        error = APIStatusError(
+            "permanent failure",
+            response=httpx.Response(status, request=request),
+            body={"code": "insufficient_quota"} if status == 429 else None,
+        )
+
+        class FailingLLM:
+            async def stream_text(self, **kwargs):
+                calls.append(kwargs)
+                raise error
+                yield
+
+        with pytest.raises(APIStatusError) as caught:
+            await PromptDirector(FailingLLM()).create_directive(_request())
+        assert caught.value is error
+        assert len(calls) == 1
+
+    asyncio.run(scenario())
+
+
+def test_director_transport_backoff_can_be_cancelled(monkeypatch):
+    async def scenario():
+        waiting = asyncio.Event()
+        calls = []
+
+        async def wait(delay):
+            waiting.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            "counseling_voice_demo.runtime.prompt_director.sleep", wait, raising=False
+        )
+
+        class FailingLLM:
+            async def stream_text(self, **kwargs):
+                calls.append(kwargs)
+                raise APIConnectionError(
+                    request=httpx.Request("POST", "https://example.invalid/responses")
+                )
+                yield
+
+        task = asyncio.create_task(
+            PromptDirector(FailingLLM()).create_directive(_request())
+        )
+        try:
+            await asyncio.wait_for(waiting.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert len(calls) == 1
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["timeout", "stream_disconnect", "server_event", "http_503", "rate_limit"],
+)
+def test_director_recovers_transient_error_types(monkeypatch, failure):
+    from counseling_voice_demo.runtime.streaming_llm import StreamingLLMError
+
+    async def scenario():
+        request = httpx.Request("POST", "https://example.invalid/responses")
+        errors = {
+            "timeout": APITimeoutError(request=request),
+            "stream_disconnect": httpx.RemoteProtocolError("stream disconnected"),
+            "server_event": StreamingLLMError("server failed", code="server_error"),
+            "http_503": APIStatusError(
+                "unavailable", response=httpx.Response(503, request=request), body=None
+            ),
+            "rate_limit": APIStatusError(
+                "slow down",
+                response=httpx.Response(429, request=request),
+                body={"code": "rate_limit_exceeded"},
+            ),
+        }
+        delays = []
+
+        async def wait(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr("counseling_voice_demo.runtime.prompt_director.sleep", wait)
+
+        class InterruptedLLM(_RecordingLLM):
+            async def stream_text(self, **kwargs):
+                if not self.calls:
+                    self.calls.append(kwargs)
+                    raise errors[failure]
+                async for part in super().stream_text(**kwargs):
+                    yield part
+
+        llm = InterruptedLLM(json.dumps(_payload(), ensure_ascii=False))
+        await PromptDirector(llm).create_directive(_request())
+        assert len(llm.calls) == 3
+        assert len(delays) == 1 and delays[0] > 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("header", ["retry-after", "retry-after-ms", "http-date"])
+def test_director_honors_server_retry_delay(monkeypatch, header):
+    async def scenario():
+        request = httpx.Request("POST", "https://example.invalid/responses")
+        name = "retry-after" if header == "http-date" else header
+        value = (
+            format_datetime(
+                datetime.now(timezone.utc) + timedelta(seconds=120), usegmt=True
+            )
+            if header == "http-date"
+            else "120000" if header == "retry-after-ms" else "120"
+        )
+        error = APIStatusError(
+            "unavailable",
+            response=httpx.Response(503, request=request, headers={name: value}),
+            body=None,
+        )
+        delays = []
+
+        async def wait(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr("counseling_voice_demo.runtime.prompt_director.sleep", wait)
+
+        class InterruptedLLM(_RecordingLLM):
+            async def stream_text(self, **kwargs):
+                if not self.calls:
+                    self.calls.append(kwargs)
+                    raise error
+                async for part in super().stream_text(**kwargs):
+                    yield part
+
+        await PromptDirector(InterruptedLLM(json.dumps(_payload()))).create_directive(
+            _request()
+        )
+        assert len(delays) == 1
+        assert 118 <= delays[0] <= 120
+
+    asyncio.run(scenario())
 
 
 def _result() -> PromptDirectorResult:

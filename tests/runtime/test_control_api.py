@@ -65,7 +65,12 @@ class PausableBlockingRuntime(BlockingRuntime):
         self.resume_generation_calls += 1
 
 
-def test_director_recovery_pause_overrides_playback_throttle_until_explicit_resume():
+@pytest.mark.parametrize(
+    "pause_reason", ["prompt_director_validation", "prompt_director_transport"]
+)
+def test_director_recovery_pause_overrides_playback_throttle_until_explicit_resume(
+    pause_reason,
+):
     async def scenario():
         runtime = PausableBlockingRuntime()
         service = RuntimeControlService(lambda: runtime)
@@ -76,12 +81,10 @@ def test_director_recovery_pause_overrides_playback_throttle_until_explicit_resu
             runtime._status = RuntimeStatus(
                 session_id=runtime.session_id,
                 phase=RuntimePhase.PAUSED,
-                pause_reason="prompt_director_validation",
+                pause_reason=pause_reason,
             )
-            assert (await service.status()).pause_reason == "prompt_director_validation"
-            assert (
-                await service.pause(reason="playback")
-            ).pause_reason == "prompt_director_validation"
+            assert (await service.status()).pause_reason == pause_reason
+            assert (await service.pause(reason="playback")).pause_reason == pause_reason
             await service._resume_after_human_input_unlocked()
             assert runtime.resume_generation_calls == 0
             assert (await service.resume()).phase is RuntimePhase.RUNNING
