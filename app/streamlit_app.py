@@ -248,7 +248,8 @@ AUTO_PROGRESS_FRAGMENT_INTERVAL_SECONDS = 0.5
 RUNTIME_TRANSCRIPT_REFRESH_INTERVAL_SECONDS = 0.1
 RUNTIME_TRANSCRIPT_GATED_PHASES = {"running", "paused", "completed"}
 DEFAULT_RUNTIME_GENERATION_LEAD_LIMIT = 5
-RUNTIME_AUDIO_MONITOR_WARMUP_MAX_WAIT_SECONDS = 24.0
+# Wait for the selected number of complete turns before initial playback.
+RUNTIME_AUDIO_MONITOR_WARMUP_MAX_WAIT_SECONDS = 0.0
 LEGACY_RUNTIME_CLOSING_START_DEFAULT_SECONDS = 900
 RUNTIME_PARTICIPANT_MODE_LABELS = {
     "one_client": "1クライアント",
@@ -1356,7 +1357,9 @@ def runtime_generation_throttle_decision(
 ) -> dict[str, Any]:
     phase = str(status.get("phase") or "")
     pause_reason = str(status.get("pause_reason") or "")
-    generated_turns = runtime_generated_turn_count_for_display(status)
+    generated_turns = runtime_generated_turn_count_for_display(
+        status, include_active_turn=False
+    )
     playback_completed_count = max(0, int(playback_completed_turn_count))
     normalized_limit = max(1, int(lead_limit))
     resume_limit = runtime_generation_resume_lead_limit(normalized_limit)
@@ -5750,7 +5753,13 @@ def render_runtime_common_session_controls() -> None:
         min_value=1,
         max_value=10,
         step=1,
-        help="上限に達すると自動Pauseし、表示との差が上限-2程度まで縮まるとResumeします。例: 上限5なら3以下で再開。",
+        help=(
+            "開始時は指定数の発話の音声生成が完了してから再生します。"
+            "1ターンは1人の発話で、指定数が多いほど開始まで待ちます。"
+            "再生中は未再生の生成完了数が上限に達すると生成を自動Pauseし、"
+            "上限-2以下でResumeします（上限7なら5以下）。"
+            "生成中の発話は数えず、再生中に常に指定数を保つ設定ではありません。"
+        ),
         key="runtime_generation_lead_limit",
     )
 

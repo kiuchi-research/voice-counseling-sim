@@ -553,7 +553,7 @@
         start_options: {},
         warmup_target_turns: 2,
         warmup_min_chunks: 10,
-        warmup_max_wait_ms: 24000,
+        warmup_max_wait_ms: 0,
         playback_inter_turn_gap_min_ms: 900,
         playback_inter_turn_gap_max_ms: 1600,
       };
@@ -1117,7 +1117,7 @@
       }
 
       function warmupMaxWaitMs() {
-        return Math.max(0, Math.floor(numericArg("warmup_max_wait_ms", 24000)));
+        return Math.max(0, Math.floor(numericArg("warmup_max_wait_ms", 0)));
       }
 
       function playbackInterTurnGapMinMs() {
@@ -1391,6 +1391,9 @@
         pausedPlaybackMessages = [];
         for (let index = 0; index < pendingMessages.length; index += 1) {
           const message = pendingMessages[index];
+          if (maybeBufferWarmupMessage(message)) {
+            continue;
+          }
           if (!handlePlaybackMessage(message)) {
             pausedPlaybackMessages = pendingMessages.slice(index);
             return false;
@@ -5582,6 +5585,12 @@
             preventReconnect: true,
           });
           clearArmedMonitorForUrl(previousUrl);
+        }
+        if (warmupActive) {
+          updateWarmupIndicator();
+          if (warmupReady()) {
+            flushWarmupPlaybackBuffer("ready");
+          }
         }
         if (args.connect || isMonitorArmed()) {
           connectMonitor({ userGesture: false, allowPendingAudio: isMonitorArmed() });

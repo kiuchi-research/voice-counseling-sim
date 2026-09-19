@@ -88,7 +88,7 @@ def test_runtime_audio_monitor_component_buffers_initial_warmup_playback() -> No
     assert '<div class="warmup-indicator" id="warmup-indicator" aria-live="polite">' in html
     assert "warmup_target_turns: 2" in html
     assert "warmup_min_chunks: 10" in html
-    assert "warmup_max_wait_ms: 24000" in html
+    assert "warmup_max_wait_ms: 0" in html
     assert "let warmupActive = false" in html
     assert "let warmupBufferedMessages = []" in html
     assert "const warmupCompletedTurnKeys = new Set()" in html

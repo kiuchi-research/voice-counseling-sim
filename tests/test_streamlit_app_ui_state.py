@@ -2850,15 +2850,27 @@ def test_runtime_generation_throttle_pauses_when_generation_lead_reaches_limit()
     assert decision["runtime_generation_throttle_active"] is True
 
 
-def test_runtime_generation_throttle_uses_display_generated_turn_count() -> None:
+def test_runtime_generation_throttle_waits_for_completed_turns() -> None:
     decision = runtime_generation_throttle_decision(
-        status={"phase": "running", "completed_turns": 4, "current_turn_id": 4},
-        playback_completed_turn_count=3,
-        lead_limit=2,
+        status={"phase": "running", "completed_turns": 6, "current_turn_id": 6},
+        playback_completed_turn_count=0,
+        lead_limit=7,
         throttle_active=False,
     )
 
-    assert decision["runtime_generation_lead_turns"] == 2
+    assert decision["runtime_generation_lead_turns"] == 6
+    assert decision["runtime_generation_throttle_action"] is None
+
+
+def test_runtime_generation_throttle_pauses_after_seven_completed_turns() -> None:
+    decision = runtime_generation_throttle_decision(
+        status={"phase": "running", "completed_turns": 7, "current_turn_id": 7},
+        playback_completed_turn_count=0,
+        lead_limit=7,
+        throttle_active=False,
+    )
+
+    assert decision["runtime_generation_lead_turns"] == 7
     assert decision["runtime_generation_throttle_action"] == "pause"
 
 
@@ -3781,6 +3793,25 @@ def test_runtime_initial_warmup_state_releases_on_timeout() -> None:
     assert updates["runtime_initial_warmup_active"] is False
     assert updates["runtime_initial_warmup_released"] is True
     assert updates["runtime_initial_warmup_started_at_monotonic"] is None
+
+
+def test_runtime_initial_warmup_default_waits_for_seven_turns_past_24_seconds() -> None:
+    for completed_turns in range(1, 8):
+        updates = runtime_initial_warmup_state_updates(
+            status={"phase": "running", "completed_turns": completed_turns},
+            session_id="session-current",
+            warmup_target_turns=7,
+            warmup_max_wait_seconds=(
+                streamlit_app.RUNTIME_AUDIO_MONITOR_WARMUP_MAX_WAIT_SECONDS
+            ),
+            warmup_session_id="session-current",
+            warmup_started_at_monotonic=100.0,
+            warmup_released=False,
+            now_monotonic=100.0 + 30 * completed_turns,
+        )
+
+        assert updates["runtime_initial_warmup_active"] is (completed_turns < 7)
+        assert updates["runtime_initial_warmup_released"] is (completed_turns == 7)
 
 
 def test_runtime_remaining_metric_uses_closing_time_then_closing_turn_count() -> None:
