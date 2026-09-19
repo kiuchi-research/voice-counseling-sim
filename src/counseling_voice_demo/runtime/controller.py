@@ -2955,7 +2955,7 @@ class ConversationRuntime:
                         },
                     )
                 )
-            elif details["validation_error"] or details["response_issues"]:
+            elif details["validation_error"] or details["must_fix_issue_count"]:
                 event_type = (
                     "prompt_director_regeneration_started"
                     if details["will_retry"]
@@ -2973,7 +2973,25 @@ class ConversationRuntime:
                             "attempt": details["attempt"],
                             "regeneration_round": details["regeneration_round"],
                             "response_issue_count": len(details["response_issues"]),
+                            "must_fix_issue_count": details["must_fix_issue_count"],
+                            "advisory_issue_count": details["advisory_issue_count"],
                             "will_retry": details["will_retry"],
+                        },
+                    )
+                )
+            elif details["advisory_issue_count"]:
+                await self.logger.log_event(
+                    RuntimeEvent(
+                        session_id=self.config.session_id,
+                        event_type="prompt_director_advisory_recorded",
+                        turn_id=request.turn_id,
+                        speaker=request.speaker_id,
+                        details={
+                            "attempt_group_id": attempt_group_id,
+                            "stage": details["stage"],
+                            "attempt": details["attempt"],
+                            "regeneration_round": details["regeneration_round"],
+                            "advisory_issue_count": details["advisory_issue_count"],
                         },
                     )
                 )

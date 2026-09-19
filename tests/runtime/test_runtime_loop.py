@@ -2875,11 +2875,13 @@ class ExcerptRepairLLM:
         *,
         semantic: bool = False,
         transport: bool = False,
+        advisory: bool = False,
     ) -> None:
         self.failed_reviews = failed_reviews
         self.successful_reviews_first = successful_reviews_first
         self.semantic = semantic
         self.transport = transport
+        self.advisory = advisory
         self.calls = []
 
     async def stream_text(self, **kwargs):
@@ -2904,9 +2906,27 @@ class ExcerptRepairLLM:
             {
                 "context_basis": "共有履歴のみ参照。",
                 "response_issues": (
-                    ["他者の説明を不要に復唱している。"]
+                    [
+                        {
+                            "severity": "must_fix",
+                            "category": "speaker_confusion",
+                            "reason": "他者の説明を不要に復唱している。",
+                            "evidence": "他者の経験を本人の経験として述べている。",
+                        }
+                    ]
                     if invalid and self.semantic
-                    else []
+                    else (
+                        [
+                            {
+                                "severity": "advisory",
+                                "category": "style",
+                                "reason": "任意の言い換え案です。",
+                                "evidence": "短い伝え返しは原文で許容されている。",
+                            }
+                        ]
+                        if review and self.advisory
+                        else []
+                    )
                 ),
                 "response_intent": "相談者の話を受け止める。",
                 "response_example": "確認済みの発話です。",
@@ -2930,6 +2950,51 @@ class ExcerptRepairLLM:
             },
             ensure_ascii=False,
         )
+
+
+def test_runtime_records_advice_without_regeneration_or_pause(tmp_path):
+    async def scenario():
+        llm = ExcerptRepairLLM(failed_reviews=0, advisory=True)
+        runtime = ConversationRuntime(
+            config=RuntimeConfig(
+                max_turns=1, speaker_selection_policy="fixed_round_robin"
+            ),
+            prompt_director=PromptDirector(llm, max_retries=0),
+            sessions_dir=tmp_path,
+        )
+        await asyncio.wait_for(runtime.run(), timeout=3)
+
+        assert runtime.status.phase is RuntimePhase.COMPLETED
+        assert len(runtime.turns) == 2
+        assert len(llm.calls) == 2
+        attempts = [
+            json.loads(line)
+            for line in runtime.logger.paths.prompt_director_attempts_jsonl.read_text().splitlines()
+        ]
+        review = attempts[-1]["details"]
+        assert review["advisory_issue_count"] == 1
+        assert review["must_fix_issue_count"] == 0
+        assert review["will_retry"] is False
+        assert review["response_issues"][0]["severity"] == "advisory"
+        events = [
+            json.loads(line)
+            for line in runtime.logger.paths.events_jsonl.read_text().splitlines()
+        ]
+        types = {event["event_type"] for event in events}
+        assert "prompt_director_advisory_recorded" in types
+        assert not types & {
+            "prompt_director_regeneration_started",
+            "prompt_director_validation_failed",
+            "prompt_director_waiting_for_resume",
+            "runtime_error",
+        }
+        for path in (
+            runtime.logger.paths.transcripts_jsonl,
+            runtime.logger.paths.events_jsonl,
+        ):
+            assert "任意の言い換え案です。" not in path.read_text()
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.parametrize("semantic", [False, True])

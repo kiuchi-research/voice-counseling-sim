@@ -227,8 +227,9 @@ PROMPT_DIRECTOR_SYSTEM_PROMPT = (
 PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT = (
     "あなたは発話候補の独立した審査担当です。設定された応答プロンプトと実際の履歴を正本にします。"
     "候補のresponse_exampleは変更できません。候補が不適切でも本文を修正せず、"
-    "response_issuesに問題点と根拠を記してください。修正は別の生成担当が行います。"
-    "問題がなければresponse_issuesを空配列にし、本文を一字一句そのまま返してください。\n"
+    "response_issuesの各項目にseverity・category・reason・evidenceを記してください。"
+    "修正は別の生成担当が行います。指摘がなければresponse_issuesを空配列にし、"
+    "参考意見だけの場合も本文を一字一句そのまま返してください。\n"
     "context_basisには、まず実際の履歴で直近に何を尋ね、誰が何と回答したかを話者ID付きで記してください。"
     "未回答者が残るかも、その履歴上の事実から確認してください。候補はその後の新しい発話です。"
     "履歴上で済んだ必須行為を、候補の一文にも含める必要はありません。"
@@ -252,10 +253,23 @@ PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT = (
     "誰かが話しただけで全員回答済みとはしない。\n"
     "4. 原文との整合: 必須行為の不足、禁止された行為、条件・回数・順序・例外の取り違えを点検する。"
     "終了判定の同意者と最終本文の終結宣言も照合する。本文の不備を適合と説明し直さない。\n"
-    "5. 差し戻しの必要性: response_issuesには原文または実際の履歴と矛盾する具体的な不備だけを記す。"
+    "5. 差し戻しの必要性: severity=must_fixは、そのまま採用すると明確な違反になる必須修正だけ。"
+    "categoryはhistory_contradiction（実際の履歴との矛盾・架空の既発言）、"
+    "speaker_confusion（話者・人物の混同）、required_instruction_violation（今回適用される必須指示の不足）、"
+    "prohibited_instruction_violation（今回適用される禁止指示の違反）から選ぶ。"
+    "reasonに不備、evidenceに根拠となる話者別の実発話または原文のsource・行番号と適用条件を短く示す。"
+    "必須・禁止の違反とする際はinstruction_checksのforceとapplicabilityにも整合させ、"
+    "推奨や例外、実施済み・回答済みの行為を今回の必須条件へ強めない。\n"
+    "severity=advisoryは参考意見であり、再生成の理由にはならない。categoryはstyle（言い回しの好み）、"
+    "optional_improvement（任意の改善案）、uncertain（違反を裏付ける事実が不十分な疑義）から選ぶ。"
     "『もう少し新しい反応がほしい』『応答目的が弱い』など文体や進展の好みを違反にしない。"
-    "二人が同じ情報しか知らない場合、違いを作らせることは誤り。"
-    "候補が既出の説明を長く言い直している場合は、その説明部分だけを示す。\n\n"
+    "参考意見を必須修正にするために、原文や履歴にない条件を作らない。\n"
+    "カウンセラーの短い伝え返しや要約は、原文が許している限り違反ではない。"
+    "別表現にできるというだけならadvisoryにとどめる。二人が同じ情報しか知らない場合、"
+    "違いを作らせることは誤り。候補が既出の説明を長く言い直している場合は、その説明部分だけを示す。"
+    "終了時に質問がないことだけではmust_fixにしない。誰にどの必須確認が未実施・未回答なのかを"
+    "実際の履歴と原文で特定できる場合だけ不足として扱う。既に答えた人には同じ確認を要求しない。"
+    "語尾だけ異なる等、同じ内容・行為の候補には同じ基準を適用する。\n\n"
     "## 審査結果の形式\n"
     "- instruction_checksは今回に関係する原文の指示について、各source内の[L番号]で"
     "start_lineとend_lineを選ぶ。前提・例外を含め、空行を端点にせず、原文以外を指示として引用しない。\n"
@@ -377,6 +391,43 @@ class SessionEndContext:
     allow_agreed_end: bool
 
 
+class _ReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(
+        min_length=1, description="指摘する具体的な不備または任意の改善案。"
+    )
+    evidence: str = Field(
+        min_length=1,
+        description="原文の適用条件・強さ、または話者別の実際の履歴に基づく短い根拠。",
+    )
+
+    @field_validator("reason", "evidence")
+    @classmethod
+    def finding_text_is_not_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("review findings require a reason and evidence")
+        return value
+
+
+class RequiredReviewIssue(_ReviewFinding):
+    severity: Literal["must_fix"]
+    category: Literal[
+        "history_contradiction",
+        "speaker_confusion",
+        "required_instruction_violation",
+        "prohibited_instruction_violation",
+    ]
+
+
+class AdvisoryReviewIssue(_ReviewFinding):
+    severity: Literal["advisory"]
+    category: Literal["style", "optional_improvement", "uncertain"]
+
+
+ReviewIssue = RequiredReviewIssue | AdvisoryReviewIssue
+
+
 class PromptDirectorResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -384,6 +435,7 @@ class PromptDirectorResult(BaseModel):
     context_basis: str = Field(min_length=1)
     response_intent: str = Field(min_length=1)
     response_example: str = Field(min_length=1)
+    response_issues: list[ReviewIssue] = Field(default_factory=list)
     session_end_assessment: SessionEndAssessment | None = None
 
     @field_validator(
@@ -426,21 +478,17 @@ class _PromptDirectorResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     context_basis: str = Field(min_length=1)
-    response_issues: list[str] = Field(
-        description="候補の実質的な違反と原文・履歴上の根拠。問題がなければ空配列。文体の好みは含めない。"
+    response_issues: list[ReviewIssue] = Field(
+        description=(
+            "must_fixは明確な履歴矛盾・話者混同・今回適用される必須/禁止指示の違反のみ。"
+            "文体、任意の改善、不確かな疑義はadvisory。指摘がなければ空配列。"
+        )
     )
     session_end_assessment: SessionEndAssessment | None = None
     response_intent: str = Field(min_length=1)
     response_example: str = Field(min_length=1)
     # Emit the utterance before its audit so excerpts can copy existing text.
     instruction_checks: list[_InstructionSelection] = Field(min_length=1)
-
-    @field_validator("response_issues")
-    @classmethod
-    def issues_must_not_be_blank(cls, values: list[str]) -> list[str]:
-        if any(not value.strip() for value in values):
-            raise ValueError("response_issues must not contain blank issues")
-        return values
 
 
 @dataclass(frozen=True)
@@ -587,11 +635,13 @@ class PromptDirector:
                     ),
                     "上記は未発話の候補です。本文は変更せず、そのまま返してください。"
                     "原文・本人のプロフィール・実際の履歴と独立に照合し、"
-                    "復唱、話者の混同、回答済みの再質問、その他の違反があればresponse_issuesへ記してください。"
-                    "問題がなければ空配列にしてください。候補の本文を正当化するために履歴を読み替えないでください。",
+                    "明確な履歴矛盾・話者混同・適用される必須/禁止指示の違反はmust_fix、"
+                    "文体の好み・任意の改善・根拠が不確かな疑義はadvisoryとしてresponse_issuesへ記してください。"
+                    "各指摘にcategory・reason・evidenceを付け、指摘がなければ空配列にしてください。"
+                    "候補の本文を正当化するために履歴を読み替えないでください。",
                 ]
             )
-            reviewed, review_json = await self._generate(
+            reviewed, _ = await self._generate(
                 request,
                 latest_input=review_input,
                 system_prompt=PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT,
@@ -600,7 +650,11 @@ class PromptDirector:
                 regeneration_round=regeneration_round,
                 on_attempt=on_attempt,
             )
-            issues = json.loads(review_json)["response_issues"]
+            issues = [
+                issue.model_dump()
+                for issue in reviewed.response_issues
+                if issue.severity == "must_fix"
+            ]
             if not issues:
                 return reviewed
             if regeneration_round >= self.max_retries:
@@ -631,7 +685,7 @@ class PromptDirector:
                     empty_text="（なし）",
                 )
                 + (
-                    "\n上記は未発話の候補と審査結果です。元の人物として問題箇所を修正して再生成してください。"
+                    "\n上記は未発話の候補と必須修正の指摘です。元の人物として問題箇所を修正して再生成してください。"
                     "本人の考えや既に述べた内容は保持し、相手の答えで置き換えないでください。"
                     "問題がない部分まで作り直したり、反対意見・新しい事実・結論を作ったりする必要はありません。"
                     "再質問が問題なら、語尾の変更や『ほかに』の追加だけで同じ問いを残さず、"
@@ -680,7 +734,7 @@ class PromptDirector:
                 on_attempt=on_attempt,
             )
             error = None
-            issues: list[str] = []
+            issues: list[dict[str, str]] = []
             try:
                 result = parse_prompt_director_response(
                     response_json,
@@ -695,13 +749,19 @@ class PromptDirector:
                         locked_response, result.response_example
                     )
                 if locked_response is not None:
-                    issues = json.loads(response_json)["response_issues"]
+                    issues = [issue.model_dump() for issue in result.response_issues]
             except PromptDirectorError as exc:
                 error = exc
             retryable_error = isinstance(
                 error, (PromptDirectorExcerptMismatch, PromptDirectorReviewRewrite)
             )
             will_retry = retryable_error and attempt <= self.max_retries
+            must_fix_issue_count = sum(
+                issue["severity"] == "must_fix" for issue in issues
+            )
+            advisory_issue_count = sum(
+                issue["severity"] == "advisory" for issue in issues
+            )
             if on_attempt is not None:
                 await on_attempt(
                     {
@@ -717,8 +777,13 @@ class PromptDirector:
                             error.details if retryable_error else None
                         ),
                         "response_issues": issues,
+                        "must_fix_issue_count": must_fix_issue_count,
+                        "advisory_issue_count": advisory_issue_count,
                         "will_retry": will_retry
-                        or (bool(issues) and regeneration_round < self.max_retries),
+                        or (
+                            must_fix_issue_count > 0
+                            and regeneration_round < self.max_retries
+                        ),
                     }
                 )
             if error is None:
@@ -816,6 +881,8 @@ class PromptDirector:
                             "validation_error": None,
                             "validation_details": None,
                             "response_issues": [],
+                            "must_fix_issue_count": 0,
+                            "advisory_issue_count": 0,
                             "will_retry": will_retry,
                             "transport_attempt": transport_attempt,
                             "retry_delay_seconds": delay,
@@ -1061,6 +1128,7 @@ def parse_prompt_director_response(
             context_basis=response.context_basis,
             response_intent=response.response_intent,
             response_example=response.response_example,
+            response_issues=response.response_issues,
             session_end_assessment=response.session_end_assessment,
         )
         if verify_response_excerpts:

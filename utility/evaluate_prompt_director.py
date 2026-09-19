@@ -431,6 +431,24 @@ LATE_CASES = (
         "draft": "ご主人は、ここまで話してみて何か見えてきたことはありますか？",
         "criteria": "夫はまだ答えていない。夫にだけ向けた必要な確認を保持し、妻の回答で全員が回答済みと扱わない。意味上の再生成は不要。",
     },
+    {
+        "id": "late_closing_accepts_acknowledgement_after_both_answers",
+        "speaker_id": "counselor",
+        "shared_context": "二人で旅行の計画について相談している。",
+        "prompt": _LATE_COUNSELOR_PROMPT,
+        "history": (*_LATE_CLIENT_HISTORY, ("person_b", _LATE_CLIENT_DRAFT)),
+        "turn_instruction": CLOSING_COUNSELOR_INSTRUCTION,
+        "draft": "お二人ともまだ迷いが残っているのですね。今日はここまでにしましょう。",
+        "criteria": "二人への必須確認は履歴で回答済み。質問がないというだけで差し戻さず、元の本文を保持する。言い回し等の任意の改善はadvisoryにとどめ、must_fixと再生成は不要。",
+    },
+    {
+        "id": "counselor_accepts_brief_reflection",
+        "speaker_id": "counselor",
+        "prompt": "相手の直前の発言を短く伝え返してください。新しい質問は必須ではありません。",
+        "history": (("person_a", "昨日は予定について少し話せました。"),),
+        "draft": "昨日は予定について少し話せたのですね。",
+        "criteria": "原文で求められた短い伝え返しをクライアントの不要な復唱と混同しない。元の本文を保持し、任意の別表現を勧める場合もadvisoryだけにする。must_fixと再生成は不要。",
+    },
 )
 
 

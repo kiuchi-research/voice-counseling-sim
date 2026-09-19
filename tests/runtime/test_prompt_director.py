@@ -386,6 +386,130 @@ def _payload():
     return payload
 
 
+def _review_issue(reason, *, must_fix=True, category=None):
+    return {
+        "severity": "must_fix" if must_fix else "advisory",
+        "category": category
+        or ("history_contradiction" if must_fix else "optional_improvement"),
+        "reason": reason,
+        "evidence": "原文の適用条件と話者別の実際の履歴を照合した根拠。",
+    }
+
+
+@pytest.mark.parametrize(
+    "draft_text,note",
+    [
+        ("昨日は少し話せたのですね。", "伝え返しを別の表現にする余地がある。"),
+        ("それぞれに迷いが残っているのですね。", "終了時に別の問いを加える案もある。"),
+    ],
+)
+def test_advisory_review_keeps_original_utterance_without_regeneration(
+    draft_text, note
+) -> None:
+    draft = {**_payload(), "response_example": draft_text}
+    advisory = _review_issue(note, must_fix=False)
+    reviewed = {**draft, "response_issues": [advisory]}
+    llm = _RecordingLLM([json.dumps(p) for p in (draft, reviewed)])
+    attempts = []
+
+    async def scenario():
+        async def observe(attempt):
+            attempts.append(attempt)
+
+        return await PromptDirector(llm, max_retries=0).create_directive(
+            _request(), on_attempt=observe
+        )
+
+    result = asyncio.run(scenario())
+    assert result.response_example == draft_text
+    assert len(llm.calls) == 2
+    assert attempts[-1]["response_issues"] == [advisory]
+    assert attempts[-1]["must_fix_issue_count"] == 0
+    assert attempts[-1]["advisory_issue_count"] == 1
+    assert attempts[-1]["will_retry"] is False
+    assert note not in render_prompt_director_instruction(result, include_audit=False)
+
+
+@pytest.mark.parametrize(
+    "category",
+    [
+        "history_contradiction",
+        "speaker_confusion",
+        "required_instruction_violation",
+        "prohibited_instruction_violation",
+    ],
+)
+def test_must_fix_issues_regenerate_without_promoting_advisory_notes(category) -> None:
+    draft = _payload()
+    required = _review_issue(
+        "本人が言っていないことを既発話としている。", category=category
+    )
+    advisory = _review_issue("語尾を少し柔らかくする任意の案。", must_fix=False)
+    rejected = {**draft, "response_issues": [advisory, required]}
+    repaired = {**draft, "response_example": "昨日は少し話せたのですね。"}
+    llm = _RecordingLLM([json.dumps(p) for p in (draft, rejected, repaired, repaired)])
+
+    result = asyncio.run(PromptDirector(llm).create_directive(_request()))
+
+    assert result.response_example == repaired["response_example"]
+    assert len(llm.calls) == 4
+    feedback = (
+        llm.calls[2]["latest_input"]
+        .split("<rejected_draft_to_regenerate>\n", 1)[1]
+        .split("\n</rejected_draft_to_regenerate>", 1)[0]
+    )
+    assert json.loads(feedback)["response_issues"] == [required]
+    assert advisory["reason"] not in llm.calls[2]["latest_input"]
+
+
+@pytest.mark.parametrize(
+    "issue",
+    [
+        "重要度のない旧形式の指摘。",
+        {
+            "severity": "unknown",
+            "category": "style",
+            "reason": "文体",
+            "evidence": "根拠",
+        },
+        {
+            "severity": "must_fix",
+            "category": "style",
+            "reason": "文体",
+            "evidence": "根拠",
+        },
+        {
+            "severity": "must_fix",
+            "category": "history_contradiction",
+            "reason": "矛盾",
+            "evidence": " ",
+        },
+    ],
+)
+def test_review_rejects_unclassified_or_unsupported_mandatory_issue(issue) -> None:
+    payload = {**_payload(), "response_issues": [issue]}
+    with pytest.raises(PromptDirectorError, match="JSON"):
+        parse_prompt_director_response(json.dumps(payload), request=_request())
+
+
+def test_advisory_does_not_bypass_reviewed_utterance_lock() -> None:
+    draft = _payload()
+    advisory = _review_issue("別の言い回しも可能。", must_fix=False, category="style")
+    rewritten = {
+        **draft,
+        "response_example": "候補と違う本文を審査担当が書きました。",
+        "response_issues": [advisory],
+    }
+    accepted = {**draft, "response_issues": [advisory]}
+    llm = _RecordingLLM([json.dumps(p) for p in (draft, rewritten, accepted)])
+
+    result = asyncio.run(PromptDirector(llm).create_directive(_request()))
+
+    assert result.response_example == draft["response_example"]
+    assert len(llm.calls) == 3
+    assert llm.calls[-1]["system_prompt"] == PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT
+
+
 def _end_assessment():
     return {
         "explicit_end_request_client_ids": [],
@@ -835,6 +959,7 @@ def test_review_cannot_replace_persons_draft_with_peers_utterance() -> None:
 def test_semantic_issue_regenerates_with_original_author_then_reviews_again(
     issue,
 ) -> None:
+    issue = _review_issue(issue)
     draft = _payload()
     rejected = {**draft, "response_issues": [issue]}
     repaired = {
@@ -865,7 +990,7 @@ def test_semantic_issue_regenerates_with_original_author_then_reviews_again(
         PROMPT_DIRECTOR_SYSTEM_PROMPT,
         PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT,
     ]
-    assert issue in llm.calls[2]["latest_input"]
+    assert issue["reason"] in llm.calls[2]["latest_input"]
     assert llm.calls[2]["history"] == llm.calls[0]["history"]
     assert llm.calls[3]["text_format"]["schema"]["properties"]["response_example"][
         "enum"
@@ -882,7 +1007,10 @@ def test_unresolved_semantic_issues_are_bounded_and_never_adopted(max_retries) -
     )
 
     draft = _payload()
-    rejected = {**draft, "response_issues": ["回答済みの問いを繰り返している。"]}
+    rejected = {
+        **draft,
+        "response_issues": [_review_issue("回答済みの問いを繰り返している。")],
+    }
     expected_calls = 2 * (max_retries + 1)
     llm = _RecordingLLM([json.dumps(p) for p in (draft, rejected) * (max_retries + 1)])
     with pytest.raises(PromptDirectorRetriesExhausted, match="意味検証"):
@@ -918,7 +1046,10 @@ def test_director_repairs_rejected_response_and_keeps_original_context() -> None
                     {
                         **draft,
                         "response_issues": [
-                            "注文は確定済みで、商品名の再質問は禁止されている。"
+                            _review_issue(
+                                "注文は確定済みで、商品名の再質問は禁止されている。",
+                                category="prohibited_instruction_violation",
+                            )
                         ],
                     },
                     ensure_ascii=False,
@@ -1024,7 +1155,10 @@ def test_review_does_not_inherit_drafts_false_claim_of_fulfilling_a_question() -
                     {
                         **draft,
                         "response_issues": [
-                            "本人が分かったことは未確認で、要約だけでは必須質問を満たさない。"
+                            _review_issue(
+                                "本人が分かったことは未確認で、要約だけでは必須質問を満たさない。",
+                                category="required_instruction_violation",
+                            )
                         ],
                     },
                     ensure_ascii=False,
