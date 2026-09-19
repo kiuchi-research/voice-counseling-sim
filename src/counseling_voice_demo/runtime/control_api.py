@@ -196,10 +196,10 @@ class RuntimeControlService:
                     )
                 self._phase = RuntimePhase.PAUSED
                 self._pause_reason = _normalize_pause_reason(reason)
-            elif (
-                self._phase is RuntimePhase.PAUSED
-                and self._pause_reason != "prompt_director_validation"
-            ):
+            elif self._phase is RuntimePhase.PAUSED and self._pause_reason not in {
+                "prompt_director_validation",
+                "prompt_director_transport",
+            }:
                 self._pause_reason = _normalize_pause_reason(reason)
             return self._current_status_unlocked()
 
@@ -513,10 +513,10 @@ class RuntimeControlService:
             raise RuntimeControlError("runtime is not running")
 
     async def _resume_after_human_input_unlocked(self) -> None:
-        if (
-            self._phase is not RuntimePhase.PAUSED
-            or self._pause_reason == "prompt_director_validation"
-        ):
+        if self._phase is not RuntimePhase.PAUSED or self._pause_reason in {
+            "prompt_director_validation",
+            "prompt_director_transport",
+        }:
             return
         await self._call_runtime_control_hook_unlocked("resume_generation")
         self._phase = RuntimePhase.RUNNING
@@ -611,10 +611,10 @@ class RuntimeControlService:
                 RuntimePhase.PAUSED,
             }:
                 status = self._read_runtime_status_unlocked()
-                if (
-                    status.phase is RuntimePhase.PAUSED
-                    and status.pause_reason == "prompt_director_validation"
-                ):
+                if status.phase is RuntimePhase.PAUSED and status.pause_reason in {
+                    "prompt_director_validation",
+                    "prompt_director_transport",
+                }:
                     self._phase = RuntimePhase.PAUSED
                     self._pause_reason = status.pause_reason
             return

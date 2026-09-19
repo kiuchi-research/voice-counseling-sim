@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import random
+import time
+from asyncio import sleep
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal, Protocol
 
 from pydantic import (
@@ -21,6 +26,7 @@ from counseling_voice_demo.runtime.prompt_context import (
     build_dialogue_history,
 )
 from counseling_voice_demo.runtime.protocols import StreamingLLMLike
+from counseling_voice_demo.runtime.streaming_llm import is_retryable_stream_error
 
 LOGGER = logging.getLogger(__name__)
 AttemptObserver = Callable[[dict[str, Any]], Awaitable[None]]
@@ -294,6 +300,32 @@ class PromptDirectorReviewRewrite(PromptDirectorError):
 
 class PromptDirectorRetriesExhausted(PromptDirectorError):
     """The caller can retain the turn and explicitly resume generation later."""
+
+    pause_reason = "prompt_director_validation"
+
+
+class PromptDirectorTransportRetriesExhausted(PromptDirectorRetriesExhausted):
+    pause_reason = "prompt_director_transport"
+
+
+def _transport_retry_delay(error: Exception, retry_number: int) -> float:
+    headers = getattr(getattr(error, "response", None), "headers", {})
+    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+        value = headers.get(name)
+        if value is None:
+            continue
+        try:
+            delay = float(value) * scale
+        except ValueError:
+            if name != "retry-after":
+                continue
+            try:
+                delay = parsedate_to_datetime(value).timestamp() - time.time()
+            except (TypeError, ValueError, OverflowError):
+                continue
+        if math.isfinite(delay) and delay > 0:
+            return delay
+    return min(2 ** (retry_number - 1), 30) * random.uniform(0.75, 1.0)
 
 
 class PromptInstructionCheck(BaseModel):
@@ -636,16 +668,17 @@ class PromptDirector:
             ]
         attempt_input = latest_input
         for attempt in range(1, self.max_retries + 2):
-            parts = [
-                part
-                async for part in self.llm.stream_text(
-                    latest_input=attempt_input,
-                    history=conversation_messages,
-                    system_prompt=system_prompt,
-                    text_format=text_format,
-                )
-            ]
-            response_json = "".join(parts)
+            response_json = await self._collect_response(
+                request=request,
+                latest_input=attempt_input,
+                history=conversation_messages,
+                system_prompt=system_prompt,
+                text_format=text_format,
+                stage=stage,
+                attempt=attempt,
+                regeneration_round=regeneration_round,
+                on_attempt=on_attempt,
+            )
             error = None
             issues: list[str] = []
             try:
@@ -732,6 +765,85 @@ class PromptDirector:
                 )
             )
         raise AssertionError("unreachable Prompt Director retry state")
+
+    async def _collect_response(
+        self,
+        *,
+        request: PromptDirectorRequest,
+        latest_input: str,
+        history: list[dict[str, Any]],
+        system_prompt: str,
+        text_format: dict[str, Any],
+        stage: str,
+        attempt: int,
+        regeneration_round: int,
+        on_attempt: AttemptObserver | None,
+    ) -> str:
+        for transport_attempt in range(1, self.max_retries + 2):
+            try:
+                # Buffer the entire stage. Interrupted JSON must never reach
+                # validation, playback, or the next retry's conversation history.
+                return "".join(
+                    [
+                        part
+                        async for part in self.llm.stream_text(
+                            latest_input=latest_input,
+                            history=history,
+                            system_prompt=system_prompt,
+                            text_format=text_format,
+                        )
+                    ]
+                )
+            except Exception as exc:
+                if not is_retryable_stream_error(exc):
+                    raise
+                will_retry = transport_attempt <= self.max_retries
+                delay = (
+                    _transport_retry_delay(exc, transport_attempt)
+                    if will_retry
+                    else None
+                )
+                if on_attempt is not None:
+                    await on_attempt(
+                        {
+                            "stage": stage,
+                            "attempt": attempt,
+                            "regeneration_round": regeneration_round,
+                            "response_json": "",
+                            "system_prompt": system_prompt,
+                            "input_text": latest_input,
+                            "conversation_messages": history,
+                            "validation_error": None,
+                            "validation_details": None,
+                            "response_issues": [],
+                            "will_retry": will_retry,
+                            "transport_attempt": transport_attempt,
+                            "retry_delay_seconds": delay,
+                            "transport_error": {
+                                "error_type": type(exc).__name__,
+                                "message": str(exc),
+                                "code": getattr(exc, "code", None),
+                                "status_code": getattr(exc, "status_code", None),
+                            },
+                        }
+                    )
+                if not will_retry:
+                    raise PromptDirectorTransportRetriesExhausted(
+                        "通信の再試行後も応答を取得できませんでした。"
+                        "履歴を保持して再開を待ちます。"
+                    ) from exc
+                LOGGER.warning(
+                    "Prompt Director: turn=%s speaker=%s %s 通信を再試行 %s/%s (%s, %.2f秒後)",
+                    request.turn_id,
+                    request.speaker_id,
+                    stage,
+                    transport_attempt,
+                    self.max_retries,
+                    type(exc).__name__,
+                    delay,
+                )
+                await sleep(delay)
+        raise AssertionError("unreachable transport retry state")
 
 
 def prompt_director_text_format(
@@ -1093,6 +1205,7 @@ __all__ = [
     "PromptDirectorRequest",
     "PromptDirectorResult",
     "PromptDirectorRetriesExhausted",
+    "PromptDirectorTransportRetriesExhausted",
     "PromptInstructionCheck",
     "SessionEndAssessment",
     "SessionEndContext",

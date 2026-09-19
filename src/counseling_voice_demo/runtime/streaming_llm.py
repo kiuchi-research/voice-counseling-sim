@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
 from typing import Any
 
+import httpx
+from openai import APIConnectionError, APIError, APIStatusError
 
 TERMINAL_BOUNDARIES = {"。", "？", "！", "?", "!"}
 RESPONSES_TEXT_DELTA_EVENT = "response.output_text.delta"
@@ -14,7 +16,62 @@ RESPONSES_INPUT_ROLES = {"system", "developer", "user", "assistant"}
 
 
 class StreamingLLMError(RuntimeError):
-    pass
+
+    def __init__(self, message: str, *, code: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+def is_retryable_stream_error(error: Exception) -> bool:
+    """Retry transient transport failures, never arbitrary API/validation errors."""
+    code = getattr(error, "code", None)
+    error_type = getattr(error, "type", None)
+    if (
+        code
+        in {
+            "insufficient_quota",
+            "credit_balance_exhausted",
+            "organization_spend_limit_exceeded",
+            "project_spend_limit_exceeded",
+            "organization_usage_limit_exceeded",
+            "misalignment_policy_violation",
+        }
+        or error_type == "insufficient_quota"
+    ):
+        return False
+    if isinstance(error, APIStatusError):
+        return error.status_code in {408, 409, 429} or error.status_code >= 500
+    if isinstance(
+        error,
+        (
+            APIConnectionError,
+            httpx.TimeoutException,
+            httpx.NetworkError,
+            httpx.RemoteProtocolError,
+        ),
+    ):
+        return True
+    if not isinstance(error, (APIError, StreamingLLMError)):
+        return False
+    transient_codes = {
+        "server_error",
+        "server_is_overloaded",
+        "service_unavailable_error",
+        "rate_limit_exceeded",
+        "rate_limit_error",
+        "slow_down",
+    }
+    if code:
+        return code in transient_codes
+    if error_type in transient_codes:
+        return True
+    # Azure can send this proxy error inside an already-open SSE response,
+    # which the SDK raises as plain APIError without an HTTP error status.
+    return (
+        str(error)
+        .lower()
+        .startswith("upstream connect error or disconnect/reset before headers")
+    )
 
 
 class TtsTextChunker:
@@ -72,13 +129,18 @@ def build_responses_input(
 def extract_text_delta(event: Any) -> str | None:
     event_type = _event_value(event, "type")
     if event_type == RESPONSES_ERROR_EVENT:
-        raise StreamingLLMError(_stream_error_message(event))
+        raise StreamingLLMError(
+            _stream_error_message(event),
+            code=_error_value(_event_value(event, "error"), "code")
+            or _event_value(event, "code"),
+        )
     if event_type == RESPONSES_INCOMPLETE_EVENT:
         raise StreamingLLMError(_response_incomplete_message(event))
     if event_type == RESPONSES_FAILED_EVENT:
         response = _event_value(event, "response")
         raise StreamingLLMError(
-            f"OpenAI response failed: {_stream_error_message(response)}"
+            f"OpenAI response failed: {_stream_error_message(response)}",
+            code=_error_value(_event_value(response, "error"), "code"),
         )
     if event_type != RESPONSES_TEXT_DELTA_EVENT:
         return None

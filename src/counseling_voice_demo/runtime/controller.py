@@ -2739,13 +2739,13 @@ class ConversationRuntime:
             try:
                 result = await asyncio.shield(task)
                 break
-            except PromptDirectorRetriesExhausted:
+            except PromptDirectorRetriesExhausted as exc:
                 if speculative:
                     # A speculative speaker may never be selected. Only the
                     # actual matching turn is allowed to pause the conversation.
                     raise
                 self._generation_resume_event.clear()
-                self._prompt_director_pause_reason = "prompt_director_validation"
+                self._prompt_director_pause_reason = exc.pause_reason
                 self._last_event_type = "prompt_director_waiting_for_resume"
                 await self.logger.log_event(
                     RuntimeEvent(
@@ -2754,7 +2754,12 @@ class ConversationRuntime:
                         turn_id=turn_id,
                         speaker=speaker,
                         details={
-                            "message": "応答の再生成後も発話内容または引用の検証を通過できませんでした。履歴を保持しています。再開すると同じターンを再生成します。"
+                            "pause_reason": exc.pause_reason,
+                            "message": (
+                                "通信の再試行後も応答を取得できませんでした。履歴を保持しています。再開すると同じターンを再生成します。"
+                                if exc.pause_reason == "prompt_director_transport"
+                                else "応答の再生成後も発話内容または引用の検証を通過できませんでした。履歴を保持しています。再開すると同じターンを再生成します。"
+                            ),
                         },
                     )
                 )
@@ -2929,7 +2934,28 @@ class ConversationRuntime:
                     },
                 )
             )
-            if details["validation_error"] or details["response_issues"]:
+            if details.get("transport_error"):
+                await self.logger.log_event(
+                    RuntimeEvent(
+                        session_id=self.config.session_id,
+                        event_type=(
+                            "prompt_director_transport_retry"
+                            if details["will_retry"]
+                            else "prompt_director_transport_exhausted"
+                        ),
+                        turn_id=request.turn_id,
+                        speaker=request.speaker_id,
+                        details={
+                            "attempt_group_id": attempt_group_id,
+                            "stage": details["stage"],
+                            "transport_attempt": details["transport_attempt"],
+                            "will_retry": details["will_retry"],
+                            "retry_delay_seconds": details["retry_delay_seconds"],
+                            **details["transport_error"],
+                        },
+                    )
+                )
+            elif details["validation_error"] or details["response_issues"]:
                 event_type = (
                     "prompt_director_regeneration_started"
                     if details["will_retry"]

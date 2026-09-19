@@ -4689,6 +4689,15 @@ def render_runtime_session_panel(
             "応答の再生成を繰り返しましたが、確認を完了できなかったため一時停止しています。"
             "会話の履歴は保持されています。Resume を押すと同じターンから再生成します。"
         )
+    if (
+        runtime_status.get("phase") == "paused"
+        and runtime_status.get("pause_reason") == "prompt_director_transport"
+    ):
+        st.warning(
+            "通信の再試行後も応答を取得できなかったため、一時停止しています。"
+            "会話の履歴は保持されています。接続の回復後に Resume を押すと、"
+            "同じターンから再生成します。"
+        )
 
 
 def render_runtime_debug_panel(client: RuntimeControlClient) -> None:
