@@ -2730,6 +2730,7 @@ class ConversationRuntime:
             ),
             turn_specific_instructions=(existing_instruction or "").strip(),
             session_end_context=session_end_context,
+            response_target_id=response_target,
         )
         while True:
             task = self._prompt_director_tasks.get(request)

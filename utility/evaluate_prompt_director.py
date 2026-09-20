@@ -452,6 +452,159 @@ LATE_CASES = (
 )
 
 
+_REPETITION_PROMPT = (
+    "あなたは旅行の相談を受けるカウンセラーです。原則、短い伝え返しと質問一つで応答します。\n"
+    "二人の希望を無理に一致させず、本人の言葉に沿って進めてください。\n"
+    "回答済みの情報を同じ相手に繰り返し求めず、分からないという回答も尊重してください。\n"
+    "新しい事情や訂正があれば必要な再確認をしてください。助言や事実を作らないでください。"
+)
+_REPETITION_HISTORY = (
+    ("person_a", "旅行では予定を詰めすぎず、疲れたら休めるようにしたいです。"),
+    ("person_b", "私は移動の時間だけは決めたいです。乗り遅れないか心配です。"),
+    ("counselor", "Aさんは、どこまでなら無理なく予定を決められそうですか？"),
+    (
+        "person_a",
+        "朝の体調がよければ出発の目安を相談できます。疲れていたらホテルで休む選択肢を残したいです。食事の時間は決めなくていいと思います。",
+    ),
+    (
+        "person_b",
+        "休めるようにするのは分かります。ただ、出発時刻が何も決まらないと不安なので、移動の目安だけは二人で共有しておきたいです。",
+    ),
+)
+REPETITION_CASES = (
+    {
+        "id": "repetition_rejects_answered_person_after_other_reply",
+        "response_target_id": "person_a",
+        "speaker_id": "counselor",
+        "prompt": _REPETITION_PROMPT,
+        "history": _REPETITION_HISTORY,
+        "draft": "休める余地と共通の目安が大事なんですね。Aさんは、どこまでなら無理なく予定を決められそうですか？",
+        "criteria": "Aは体調の条件・出発の目安・休む選択肢まで回答済み。直後にBが不安を述べてもAを未回答へ戻さない。同じ情報の再質問をmust_fixとして差し戻し、語尾を変えただけの再質問へ再生成しない。",
+    },
+    {
+        "id": "repetition_rejects_broad_paraphrase_of_answered_question",
+        "evaluation_kind": "boundary",
+        "response_target_id": "person_a",
+        "speaker_id": "counselor",
+        "prompt": _REPETITION_PROMPT,
+        "history": _REPETITION_HISTORY,
+        "draft": "Aさんは休める選択肢を残したいんですね。Aさんにとって、予定を決めるときに一番大事にしたい線はどこでしょうか？",
+        "criteria": "境界ケース。既回答の条件を広く聞き直す解釈と、まだ明言されていない優先順位を尋ねる解釈がある。検出率の分母に入れず、審査がどちらの意味と根拠を採ったかを確認する。明確な既回答・未回答の優先順位は別の対照ケースで評価する。",
+    },
+    {
+        "id": "repetition_keeps_question_for_unanswered_person",
+        "response_target_id": "person_b",
+        "speaker_id": "counselor",
+        "prompt": _REPETITION_PROMPT,
+        "history": _REPETITION_HISTORY[:-1],
+        "draft": "Bさんは、どこまでなら無理なく予定を決められそうですか？",
+        "criteria": "Aの回答をBの回答とみなさず、未回答のB本人への確認をそのまま保持する。must_fix不要。",
+    },
+    {
+        "id": "repetition_keeps_specific_unanswered_followup",
+        "response_target_id": "person_a",
+        "speaker_id": "counselor",
+        "prompt": _REPETITION_PROMPT,
+        "history": _REPETITION_HISTORY,
+        "draft": "Aさんは、疲れたらホテルで休めるようにしたいんですね。そのときBさんにはどうしていてもらえるとよさそうですか？",
+        "criteria": "Aが休む場合にBへ望むことはまだ語られていない。同じ旅行の話題でも、既回答と異なる具体的な情報への質問はそのまま保持する。must_fix不要。",
+    },
+    {
+        "id": "repetition_keeps_reconfirmation_after_changed_conditions",
+        "response_target_id": "person_a",
+        "speaker_id": "counselor",
+        "prompt": _REPETITION_PROMPT,
+        "history": (
+            *_REPETITION_HISTORY,
+            (
+                "person_a",
+                "今、列車が運休したと分かりました。別の行き方を考えないといけません。",
+            ),
+        ),
+        "draft": "列車が運休して、行き方を考え直すことになったんですね。Aさん、変わった状況では、どこまでなら無理なく予定を決められそうですか？",
+        "criteria": "運休という新しい事情があり、前の答えがそのまま使えるとは限らない。根拠のある再確認を保持する。must_fix不要。",
+    },
+    {
+        "id": "repetition_keeps_requested_reflection",
+        "response_target_id": "person_a",
+        "speaker_id": "counselor",
+        "prompt": "今回はAの希望を短く伝え返してください。質問や新しい提案は加えません。",
+        "history": _REPETITION_HISTORY[:-1],
+        "draft": "体調がよい朝に出発の目安を相談して、疲れていたらホテルで休めるようにしたいんですね。",
+        "criteria": "原文が求める伝え返しは、回答済みの再質問ではない。元の本文を保持し、must_fix不要。",
+    },
+    {
+        "id": "repetition_generation_uses_existing_answers",
+        "speaker_id": "counselor",
+        "prompt": _REPETITION_PROMPT,
+        "history": _REPETITION_HISTORY,
+        "criteria": "生成の初稿からAが回答済みの予定の条件を尊重する。Aに同じ広い質問をし直さず、未確認の具体点または原文に沿う応答を選ぶ。二人の合意・経験を捏造しない。",
+    },
+    {
+        "id": "repetition_rejects_paraphrase_in_another_topic",
+        "speaker_id": "counselor",
+        "response_target_id": "person_a",
+        "prompt": "催し物の企画を相談する二人に、カウンセラーとして短く応答してください。本人が答えた情報を同じ相手に再び求めず、必要な未確認事項があれば一つ尋ねてください。助言や事実を作らないでください。",
+        "history": (
+            ("person_a", "準備の担当を決めたいです。"),
+            ("person_b", "私はチラシの印刷を引き受けます。"),
+            ("counselor", "Aさんが引き受けられる作業は何ですか？"),
+            (
+                "person_a",
+                "会場の予約と、当日の机の配置を担当できます。チラシの印刷は担当できません。",
+            ),
+            ("person_b", "印刷は私がやります。ただ、準備の日数が足りるか心配です。"),
+        ),
+        "draft": "準備が間に合うか気になるんですね。Aさんは、どんな準備なら担当できそうですか？",
+        "criteria": "Aが担当できる作業は具体的に回答済み。直後のBの不安で未回答へ戻さず、言い換えた同じ情報の再要求をmust_fixとして差し戻す。最終本文にも同じ再質問を残さない。",
+    },
+    {
+        "id": "repetition_priority_already_answered",
+        "speaker_id": "counselor",
+        "response_target_id": "person_a",
+        "prompt": _REPETITION_PROMPT,
+        "history": (
+            ("person_a", "休む余地と、予算を守ることの両方が気になります。"),
+            ("counselor", "Aさんにとって、今どちらを優先したいですか？"),
+            ("person_a", "今は休む余地を優先したいです。予算よりもそちらです。"),
+            ("person_b", "私は予算が足りるか心配です。"),
+        ),
+        "draft": "Aさんにとって、今どちらを優先したいですか？",
+        "criteria": "Aは優先順位そのものを明確に回答済み。Bの不安でAを未回答に戻さず、must_fixとして差し戻す。Aの選択を保持して再生成する。",
+    },
+    {
+        "id": "repetition_priority_not_yet_answered",
+        "speaker_id": "counselor",
+        "response_target_id": "person_a",
+        "prompt": _REPETITION_PROMPT,
+        "history": (
+            (
+                "person_a",
+                "休む余地と、予算を守ることの両方が気になります。どちらを優先するか整理したいです。",
+            ),
+            ("person_b", "私は予算が足りるか心配です。"),
+        ),
+        "draft": "Aさんにとって、今どちらを優先したいですか？",
+        "criteria": "Aは二つの希望を述べたが優先順位はまだ答えておらず、その整理を求めている。同じ候補文でも今回は必要な質問としてそのまま保持する。伝え返しがないというだけでmust_fixにしない。",
+    },
+    {
+        "id": "repetition_uses_earlier_answer_before_other_topic",
+        "speaker_id": "counselor",
+        "response_target_id": "person_a",
+        "prompt": "催し物の企画を相談する二人に、カウンセラーとして短く応答してください。本人が既に答えた情報を再び求めず、まだ尋ねる必要があることだけを尋ねてください。本人が自発的に語った情報も尊重してください。",
+        "history": (
+            ("person_a", "参加できるのは土曜日だけです。日曜日は仕事があります。"),
+            ("person_b", "私はどちらの日でも参加できます。"),
+            ("counselor", "会場については何を大切にしたいですか？"),
+            ("person_a", "駅から近いことが大事です。"),
+            ("person_b", "私は駐車場があると助かります。"),
+        ),
+        "draft": "Aさんは、土曜日と日曜日のどちらなら参加できますか？",
+        "criteria": "Aの最後の発話は会場についてだが、それ以前に土曜日だけ参加できると回答済み。直近の本人発話の再掲だけで判断せず、全履歴から再質問をmust_fixとして差し戻す。日程変更は捏造しない。",
+    },
+)
+
+
 class _SeededDraftLLM:
     """Supply a deliberately chosen draft, then use the real LLM for review."""
 
@@ -630,6 +783,7 @@ async def evaluate(
     progress: bool = False,
     clients: bool = False,
     late: bool = False,
+    repetition: bool = False,
     reasoning_effort: str | None = None,
 ) -> None:
     settings = apply_runtime_start_options(
@@ -643,11 +797,18 @@ async def evaluate(
         director = runtime.prompt_director
         if director is None:
             raise RuntimeError("Prompt Director is disabled")
-        report = {"route": runtime.ai_route_manifest["prompt_director"], "cases": []}
+        report = {
+            "route": runtime.ai_route_manifest["prompt_director"],
+            "reasoning_effort": settings.openai.prompting_llm_reasoning_effort,
+            "max_output_tokens": settings.latency.prompting_llm_max_output_tokens,
+            "cases": [],
+        }
         output.parent.mkdir(parents=True, exist_ok=True)
         try:
             if case_id:
-                selected_cases = (*CASES, *CLIENT_CASES, *LATE_CASES)
+                selected_cases = (*CASES, *CLIENT_CASES, *LATE_CASES, *REPETITION_CASES)
+            elif repetition:
+                selected_cases = REPETITION_CASES
             elif late:
                 selected_cases = LATE_CASES
             elif clients:
@@ -708,6 +869,7 @@ async def evaluate(
                         ),
                         public_history=history,
                         session_summary=case.get("summary", ""),
+                        response_target_id=case.get("response_target_id"),
                         turn_specific_instructions=(
                             SESSION_TIME_INSTRUCTION
                             if progress
@@ -800,7 +962,11 @@ def main() -> None:
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--reasoning-effort", choices=("none", "low", "medium", "high"))
     parser.add_argument(
-        "--case", choices=[case["id"] for case in (*CASES, *CLIENT_CASES, *LATE_CASES)]
+        "--case",
+        choices=[
+            case["id"]
+            for case in (*CASES, *CLIENT_CASES, *LATE_CASES, *REPETITION_CASES)
+        ],
     )
     parser.add_argument(
         "--closing", action="store_true", help="終了判定の架空会話5件を確認する"
@@ -813,7 +979,12 @@ def main() -> None:
     parser.add_argument(
         "--late",
         action="store_true",
-        help="終盤の重複・回答済み確認の架空会話4件を確認する",
+        help="終盤の重複・回答済み確認の架空会話6件を確認する",
+    )
+    parser.add_argument(
+        "--repetition",
+        action="store_true",
+        help="回答済みの再質問と必要な確認・伝え返しを架空会話11件で確認する（境界ケース1件を含む）",
     )
     parser.add_argument(
         "--clients",
@@ -821,9 +992,21 @@ def main() -> None:
         help="クライアントの復唱・同意・人物の区別を架空会話で確認する",
     )
     args = parser.parse_args()
-    if sum((args.closing, args.progress, args.clients, args.late, bool(args.case))) > 1:
+    if (
+        sum(
+            (
+                args.closing,
+                args.progress,
+                args.clients,
+                args.late,
+                args.repetition,
+                bool(args.case),
+            )
+        )
+        > 1
+    ):
         parser.error(
-            "--closing、--progress、--clients、--late、--case は併用できません"
+            "--closing、--progress、--clients、--late、--repetition、--case は併用できません"
         )
     try:
         asyncio.run(
@@ -835,6 +1018,7 @@ def main() -> None:
                 progress=args.progress,
                 clients=args.clients,
                 late=args.late,
+                repetition=args.repetition,
                 reasoning_effort=args.reasoning_effort,
             )
         )

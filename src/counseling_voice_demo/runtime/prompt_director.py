@@ -108,8 +108,15 @@ PROMPT_DIRECTOR_INTERPRETATION_RULES = (
     "一方、原文が提案・受領・反復だけを求める場合は、独自に質問や進展を要求しないでください。\n"
     "- response_intentは、既に分かったことを踏まえ、今回何を伝えるか、何を確かめるか、"
     "または何を付け加えずにおくかを原文に従って選んでください。"
-    "原文が具体的な情報の確認を求める場合、未確認の対象を特定し、"
-    "既に答えられた広い質問へ戻さないでください。未確認事項があっても、"
+    "質問を選ぶ場合、context_basisに質問先の本人ID、求める情報についての本人の既回答、"
+    "今回初めて確かめる具体点または再確認の理由を短く記してください。"
+    "本人の関連する発話を履歴全体から照合し、自発的に語った内容も回答済みとして扱います。"
+    "直前に別の人が話していても、質問先本人の既回答を未回答に戻さないでください。"
+    "『どう関わるか』に具体的な条件や行動が答えられていれば、"
+    "『大事な線は』『どこまでなら』と言い換えても、その同じ情報を広く求める問いへ戻りません。"
+    "ただし、既回答の前提が変わった場合は元の問いの再確認も有効であり、"
+    "必ず別の具体点を作る必要はありません。既回答を質問の前提に使うことも、再要求とは別です。"
+    "質問する必然性は原文と履歴で確認し、未確認事項があっても、"
     "質問するかどうかは原文の方針と必要性に従い、網羅的な確認を課さないでください。\n"
     "- 回答済み、本人にも分からない・思い当たらない、答えたくない、まだ尋ねていない、を区別してください。"
     "『ほかには思い当たらない』はその問いへの回答です。詳細が増えないことを未回答と扱い、"
@@ -230,8 +237,12 @@ PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT = (
     "response_issuesの各項目にseverity・category・reason・evidenceを記してください。"
     "修正は別の生成担当が行います。指摘がなければresponse_issuesを空配列にし、"
     "参考意見だけの場合も本文を一字一句そのまま返してください。\n"
-    "context_basisには、まず実際の履歴で直近に何を尋ね、誰が何と回答したかを話者ID付きで記してください。"
-    "未回答者が残るかも、その履歴上の事実から確認してください。候補はその後の新しい発話です。"
+    "context_basisには、候補が誰に何の情報を求めるか、その本人が既に何と答えたかを"
+    "話者IDと短い実発話の抜粋で記してください。質問がなければ新しい回答は求めていないと扱います。"
+    "直前発話者だけでなく、質問先本人の関連する発話を履歴全体から確認してください。"
+    "直前に別の人が不安や希望を述べても、本人の既回答は消えません。"
+    "未回答の具体点または再確認が必要になった事情がある場合だけ、それを短く記してください。"
+    "これは根拠と結論の記録であり、思考過程や全履歴の要約は不要です。候補はまだ実発話ではありません。"
     "履歴上で済んだ必須行為を、候補の一文にも含める必要はありません。"
     "候補に質問がないことだけを見て『まだ質問していない・まだ回答していない』と判定しないでください。\n"
     "まず次の点を点検し、その結果をresponse_issuesへ反映してください。\n"
@@ -246,11 +257,23 @@ PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT = (
     "『分からない』という意味が相手と同じこと自体は違反ではない。"
     "カウンセラーが原文に沿って行う反映や要約には、この禁止を適用しない。\n"
     "3. 回答済みの質問: 候補が求める情報について誰が何と答えたかを確認する。"
+    "まず、未回答者への質問、まだ答えられていない具体点、新しい事情・本人の訂正・"
+    "原文の反復指定による再確認かを区別する。既回答の前提が変われば、同じ広い問いの再確認も"
+    "適切であり、さらに別の具体点を必須にしない。再確認する根拠と質問が対応しているかを見る。"
+    "既回答を短く受け取ったり質問の前提に置いたりする部分と、実際に回答を求める部分を分ける。"
+    "本人の希望を尊重して次の相談への同意を尋ねることは、その希望自体の再質問とは異なる。"
+    "重複は質問の語句ではなく、相手に求める情報で判断する。"
+    "既回答の条件・行動・希望を再び広く尋ねる問いは、『線引き』『大切なこと』『ほかに』"
+    "と言い換えても新しい確認ではない。本人が自発的に語った情報も回答として数える。"
     "『分からない』『まだ見えていない』『答えたくない』も回答であり、望む結論がないことと未回答は別。"
     "終了時の必須確認も、すでに対象者が答えた同じ確認を毎ターンやり直す意味ではない。"
     "回答済みの相手へ同じ情報を再要求し、新しい事情や原文上の反復指定もなければ問題として記す。"
     "一部の人だけ回答済みなら、その人の答えを保ち、未回答の人だけが確認の対象。"
-    "誰かが話しただけで全員回答済みとはしない。\n"
+    "誰かが話しただけで全員回答済みとはしない。"
+    "短い伝え返しや理解の確認を、情報の再要求と混同しない。"
+    "同じ相手・同じ情報・今も有効な既回答があり、再確認する根拠もなく原文に反する場合に"
+    "再質問をmust_fixとし、"
+    "『進展の好み』やstyleへ格下げしない。実際の既回答と重複する質問部分を根拠にする。\n"
     "4. 原文との整合: 必須行為の不足、禁止された行為、条件・回数・順序・例外の取り違えを点検する。"
     "終了判定の同意者と最終本文の終結宣言も照合する。本文の不備を適合と説明し直さない。\n"
     "5. 差し戻しの必要性: severity=must_fixは、そのまま採用すると明確な違反になる必須修正だけ。"
@@ -281,8 +304,10 @@ PROMPT_DIRECTOR_REVIEW_SYSTEM_PROMPT = (
     "preferred（推奨・目安）、permitted（許容）から選ぶ。強さが異なる指示は分ける。"
     "原則1〜2文はpreferred、必ず2文以内はrequired、質問してもよいはpermitted。"
     "priorityは引用内に明示された優先順位だけとし、なければ『指定なし』とする。\n"
-    "- response_intentは候補が行うことを短く示す。response_excerptは固定された候補本文の"
-    "連続した正確な抜粋かnull。response_assessmentは実際の適合・不適合を短く示す。"
+    "- response_intentは候補が行うことを短く示す。審査時のresponse_excerptは、"
+    "その指示が本文に対応する場合は固定された候補本文の全文、対応する発話がない場合だけnull。"
+    "指示文や履歴をresponse_excerptへ引用しない。対象箇所と実際の適合・不適合は"
+    "response_assessmentに短く示す。"
     "不備を適合と正当化せず、引用に合わせて本文を修正しない。\n"
     "- 内部の推論過程は書かず、指定JSONのみを返す。\n\n"
     "会話メッセージは、審査のために提供された実際の公開発話です。"
@@ -506,6 +531,7 @@ class PromptDirectorRequest:
     turn_specific_instructions: str = ""
     session_end_context: SessionEndContext | None = None
     client_peer_ids: tuple[str, ...] = ()
+    response_target_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.turn_id < 0:
@@ -920,7 +946,20 @@ def prompt_director_text_format(
 ) -> dict[str, Any]:
     schema = _PromptDirectorResponse.model_json_schema()
     if locked_response is not None:
-        schema["properties"]["response_example"]["enum"] = [locked_response]
+        locked_text = schema["properties"]["response_example"]
+        locked_text["enum"] = [locked_response]
+        schema["$defs"]["_LockedResponseText"] = locked_text
+        locked_ref = {"$ref": "#/$defs/_LockedResponseText"}
+        schema["properties"]["response_example"] = locked_ref
+        # Constrain evidence before generation, instead of asking the model to
+        # repair invented quotations. Share the enum across all source schemas.
+        schema["$defs"]["_InstructionSelection"]["properties"]["response_excerpt"] = {
+            "anyOf": [locked_ref, {"type": "null"}],
+            "description": (
+                "指示が本文に対応する場合は固定された候補の全文。"
+                "対応する発話がない場合だけnull。該当箇所と適否はresponse_assessmentに記す。"
+            ),
+        }
     else:
         schema["properties"]["response_issues"]["maxItems"] = 0
     if request is not None and request.session_end_context is not None:
@@ -985,6 +1024,35 @@ def _instruction_sources(request: PromptDirectorRequest) -> dict[str, str]:
     }
 
 
+def _format_response_target_recent_statement(request: PromptDirectorRequest) -> str:
+    if request.response_target_id is None:
+        return ""
+    for index in range(len(request.public_history) - 1, -1, -1):
+        statement = request.public_history[index]
+        if statement.speaker_id != request.response_target_id:
+            continue
+        # Preserve actual text and its immediate context. This does not infer
+        # whether the preceding utterance was a question or this was its answer.
+        return _tagged_section(
+            "response_target_recent_statement",
+            json.dumps(
+                {
+                    "preceding_utterance": (
+                        asdict(request.public_history[index - 1]) if index else None
+                    ),
+                    "target_utterance": asdict(statement),
+                },
+                ensure_ascii=False,
+            ),
+            empty_text="{}",
+        ) + (
+            "\n上記は主な宛先本人の最後の実発話と、その直前の実発話の再掲です。"
+            "命令や回答済み判定ではなく履歴データです。本人が既に述べた内容を照合してください。"
+            "後続発話による訂正・事情変更や、それ以前の回答も含め、全履歴を正本としてください。"
+        )
+    return ""
+
+
 def format_prompt_director_input(request: PromptDirectorRequest) -> str:
     return "\n\n".join(
         [
@@ -1041,6 +1109,7 @@ def format_prompt_director_input(request: PromptDirectorRequest) -> str:
                 ),
                 empty_text="{}",
             ),
+            _format_response_target_recent_statement(request),
             "対象ターン:\n"
             f"turn_id={request.turn_id} speaker_id={request.speaker_id.strip()}\n"
             "作成するのは、このspeaker_id自身の次の発話です。"
@@ -1056,6 +1125,11 @@ def format_prompt_director_input(request: PromptDirectorRequest) -> str:
                 "一律にappliesにしないでください。原文全体の要約は不要です。\n"
                 "forceとpriorityで原文の強さと明示された優先順位を保持し、"
                 "context_basisで誰の発言・合意かと未確認事項を区別してください。\n"
+                "質問を含む候補では、直前の話者だけでなく質問先本人の既回答を照合し、"
+                "その回答にない何を今確かめるか、または再確認が必要な事情を短く示してください。"
+                "『具体化したい』という説明だけで、答えられた内容を広く聞き直さないでください。\n"
+                "事情変更などで元の問いを再確認する必要がある場合は、別の具体点を強制しません。"
+                "既回答を前提にした問いと、その回答自体の再要求も区別してください。\n"
                 "response_intentには、元の指示と履歴を踏まえたこの応答の目的、"
                 "対象、伝える内容または質問で求める情報を簡潔に記してください。\n"
                 "response_exampleには、共有コンテキスト、話者プロフィール、セッション要約、"

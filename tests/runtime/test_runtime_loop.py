@@ -2684,8 +2684,9 @@ def test_fake_runtime_uses_generated_text_as_next_agent_input(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("checkpoint,first_turn", [(-1, 0), (3, 4), (13, 7)])
+@pytest.mark.parametrize("response_target", [None, "client"])
 def test_director_and_speech_keep_same_unsummarized_history(
-    tmp_path, checkpoint, first_turn
+    tmp_path, checkpoint, first_turn, response_target
 ) -> None:
     async def scenario():
         store = RuntimePromptContextStore()
@@ -2723,10 +2724,11 @@ def test_director_and_speech_keep_same_unsummarized_history(
                 speaker="counselor",
                 input_transcript="発話14",
                 current_objective="継続",
-                response_target=None,
+                response_target=response_target,
                 existing_instruction=None,
             )
             history = director.requests[0].public_history
+            assert director.requests[0].response_target_id == response_target
             assert [message.text for message in history] == [
                 f"発話{index}" for index in range(first_turn, 15)
             ]

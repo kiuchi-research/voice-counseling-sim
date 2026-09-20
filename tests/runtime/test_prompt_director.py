@@ -608,6 +608,66 @@ def test_format_prompt_director_input_allows_missing_response_target() -> None:
     assert "<response_target>\n（指定なし）\n</response_target>" in prompt
 
 
+def test_director_keeps_target_reply_visible_after_another_person_speaks() -> None:
+    history = (
+        PublicHistoryMessage("client_a", "以前は土曜日を考えていました。"),
+        PublicHistoryMessage("counselor", "今はどの日がよさそうですか？"),
+        PublicHistoryMessage(
+            "client_a", "日曜日なら参加できます。\n午前を希望します。"
+        ),
+        PublicHistoryMessage("client_b", "私はまだ決められません。"),
+    )
+    request = replace(_request(), public_history=history, response_target_id="client_a")
+    llm = _RecordingLLM(json.dumps(_payload(), ensure_ascii=False))
+    asyncio.run(PromptDirector(llm).create_directive(request))
+
+    assert len(llm.calls) == 2
+    for call in llm.calls:
+        # This is a small view of actual utterances, not an inferred answer ledger.
+        focused = json.loads(
+            call["latest_input"]
+            .split("<response_target_recent_statement>\n", 1)[1]
+            .split("\n</response_target_recent_statement>", 1)[0]
+        )
+        assert focused == {
+            "preceding_utterance": {"speaker_id": "counselor", "text": history[1].text},
+            "target_utterance": {"speaker_id": "client_a", "text": history[2].text},
+        }
+        assert [json.loads(m["content"])["text"] for m in call["history"]] == [
+            m.text for m in history
+        ]
+
+
+@pytest.mark.parametrize("target_id", [None, "not_in_history", "client_b"])
+def test_target_statement_view_does_not_invent_missing_or_other_person_answers(
+    target_id,
+) -> None:
+    request = replace(
+        _request(),
+        public_history=(PublicHistoryMessage("client_a", "私は未定です。"),),
+        response_target_id=target_id,
+    )
+    assert "<response_target_recent_statement>" not in format_prompt_director_input(
+        request
+    )
+
+
+def test_target_statement_view_allows_no_preceding_utterance() -> None:
+    request = replace(
+        _request(),
+        public_history=(PublicHistoryMessage("client_a", "日曜日を希望します。"),),
+        response_target_id="client_a",
+    )
+    prompt = format_prompt_director_input(request)
+    focused = json.loads(
+        prompt.split("<response_target_recent_statement>\n", 1)[1].split(
+            "\n</response_target_recent_statement>", 1
+        )[0]
+    )
+    assert focused["preceding_utterance"] is None
+    assert focused["target_utterance"]["text"] == "日曜日を希望します。"
+
+
 @pytest.mark.parametrize("history_length", [0, 1, 3])
 def test_director_passes_ordered_history_with_roles_to_generation_and_review(
     history_length,
@@ -783,6 +843,33 @@ def test_director_sends_bounded_schema_and_original_lines_to_both_stages() -> No
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("director_request", [None, _request()])
+def test_review_schema_only_allows_locked_text_or_null_for_response_evidence(
+    director_request,
+):
+    draft = "「日曜日の午前」がよいのですね。\nその予定を確認します。"
+    schema = prompt_director_text_format(director_request, locked_response=draft)[
+        "schema"
+    ]
+    locked = schema["properties"]["response_example"]
+    assert locked == {"$ref": "#/$defs/_LockedResponseText"}
+    assert schema["$defs"]["_LockedResponseText"]["enum"] == [draft]
+    selections = schema["$defs"]["_InstructionSelection"]
+    choices = selections["anyOf"] if director_request is not None else [selections]
+    for selection in choices:
+        assert selection["properties"]["response_excerpt"]["anyOf"] == [
+            locked,
+            {"type": "null"},
+        ]
+    # One shared enum avoids multiplying long utterances across source variants.
+    assert (
+        json.dumps(schema, ensure_ascii=False).count(
+            json.dumps(draft, ensure_ascii=False)
+        )
+        == 1
+    )
+
+
 def test_director_rejects_missing_instruction_sources_before_calling_llm() -> None:
     async def scenario():
         request = replace(
@@ -943,7 +1030,7 @@ def test_review_cannot_replace_persons_draft_with_peers_utterance() -> None:
     result = asyncio.run(PromptDirector(llm).create_directive(_request()))
     assert result.response_example == draft["response_example"]
     assert len(llm.calls) == 3
-    assert llm.calls[1]["text_format"]["schema"]["properties"]["response_example"][
+    assert llm.calls[1]["text_format"]["schema"]["$defs"]["_LockedResponseText"][
         "enum"
     ] == [draft["response_example"]]
     assert "審査で本文を変更" in llm.calls[2]["latest_input"]
@@ -992,7 +1079,7 @@ def test_semantic_issue_regenerates_with_original_author_then_reviews_again(
     ]
     assert issue["reason"] in llm.calls[2]["latest_input"]
     assert llm.calls[2]["history"] == llm.calls[0]["history"]
-    assert llm.calls[3]["text_format"]["schema"]["properties"]["response_example"][
+    assert llm.calls[3]["text_format"]["schema"]["$defs"]["_LockedResponseText"][
         "enum"
     ] == [repaired["response_example"]]
     assert attempts[1]["response_issues"] == [issue]
