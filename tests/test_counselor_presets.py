@@ -49,10 +49,11 @@ def test_default_counselor_preset_loads_profile_prompt_and_audio() -> None:
 def test_list_counselor_presets_uses_default_directory() -> None:
     presets = list_counselor_presets()
 
-    assert [preset.preset_id for preset in presets] == [
-        "counselor_default",
-        "counselor_role",
-    ]
+    preset_ids = [preset.preset_id for preset in presets]
+    assert {"counselor_default", "counselor_role"}.issubset(preset_ids)
+    assert preset_ids == sorted(
+        path.stem for path in (ROOT_DIR / "config" / "counselor_presets").glob("*.yaml")
+    )
 
 
 def test_counselor_preset_rejects_unknown_keys(tmp_path: Path) -> None:

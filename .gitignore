@@ -11,6 +11,11 @@ api_keys.json
 *.p12
 *.pfx
 
+# Local counselor presets; only the public examples are tracked
+/config/counselor_presets/*.yaml
+!/config/counselor_presets/counselor_default.yaml
+!/config/counselor_presets/counselor_role.yaml
+
 # Generated sessions, transcripts, recordings, experiments and release bundles
 /results/
 /workbench/
