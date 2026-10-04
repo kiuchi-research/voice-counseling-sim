@@ -636,8 +636,10 @@ def test_runtime_text_provider_defaults_and_payload(monkeypatch):
     state = {}
     monkeypatch.setattr(streamlit_app, "st", SimpleNamespace(session_state=state))
     streamlit_app.prepare_runtime_text_provider_defaults()
+    ai = streamlit_app.effective_ai_settings(streamlit_app.load_runtime_config())
     for name in ("prompt_director", "turn_timing", "session_summary"):
-        assert state[f"runtime_{name}_provider"] == "azure_eastus2"
+        assert state[f"runtime_{name}_provider"] == ai.routes[name].provider
+        state[f"runtime_{name}_provider"] = "azure_eastus2"
         state[f"runtime_{name}_target_azure_eastus2"] = "custom-text-deployment"
     state["runtime_turn_timing_provider"] = "openai"
     state["runtime_turn_timing_target_openai"] = "gpt-5.6-sol"
@@ -668,7 +670,9 @@ def test_runtime_stt_provider_defaults_and_payload(monkeypatch):
     state = {}
     monkeypatch.setattr(streamlit_app, "st", SimpleNamespace(session_state=state))
     streamlit_app.prepare_runtime_stt_provider_defaults()
-    assert state["runtime_stt_provider"] == "azure_eastus2"
+    ai = streamlit_app.effective_ai_settings(streamlit_app.load_runtime_config())
+    assert state["runtime_stt_provider"] == ai.routes["realtime_transcription"].provider
+    state["runtime_stt_provider"] = "azure_eastus2"
     state["runtime_stt_target_azure_eastus2"] = "custom-stt-deployment"
     options = runtime_start_options_for_ui(
         counselor_profile=_profile(role="counselor", hidden_background=None),
@@ -691,7 +695,12 @@ def test_runtime_stt_provider_widgets_keep_edits_independently():
         "render_runtime_model_session_controls()\n"
     ).run()
     assert not app.exception
-    assert app.selectbox(key="runtime_stt_provider_widget").value == "azure_eastus2"
+    ai = streamlit_app.effective_ai_settings(streamlit_app.load_runtime_config())
+    assert (
+        app.selectbox(key="runtime_stt_provider_widget").value
+        == ai.routes["realtime_transcription"].provider
+    )
+    app.selectbox(key="runtime_stt_provider_widget").select("azure_eastus2").run()
     app.text_input(key="runtime_stt_target_azure_eastus2_widget").input(
         "azure-stt-custom"
     ).run()
@@ -705,7 +714,8 @@ def test_runtime_stt_provider_widgets_keep_edits_independently():
         == "azure-stt-custom"
     )
     assert (
-        app.selectbox(key="runtime_realtime_provider_widget").value == "azure_eastus2"
+        app.selectbox(key="runtime_realtime_provider_widget").value
+        == ai.routes["realtime_speech"].provider
     )
     app.selectbox(key="runtime_stt_provider_widget").select("openai").run()
     assert (
@@ -723,11 +733,15 @@ def test_runtime_text_provider_widgets_preserve_independent_edits():
         "render_runtime_model_session_controls()\n"
     ).run()
     assert not app.exception
+    ai = streamlit_app.effective_ai_settings(streamlit_app.load_runtime_config())
     for name in ("prompt_director", "turn_timing", "session_summary"):
         assert (
             app.selectbox(key=f"runtime_{name}_provider_widget").value
-            == "azure_eastus2"
+            == ai.routes[name].provider
         )
+    app.selectbox(key="runtime_session_summary_provider_widget").select(
+        "azure_eastus2"
+    ).run()
     app.text_input(key="runtime_session_summary_target_azure_eastus2_widget").input(
         "summary-custom"
     ).run()
@@ -750,7 +764,7 @@ def test_runtime_text_provider_widgets_preserve_independent_edits():
     )
     assert (
         app.selectbox(key="runtime_prompt_director_provider_widget").value
-        == "azure_eastus2"
+        == ai.routes["prompt_director"].provider
     )
 
 

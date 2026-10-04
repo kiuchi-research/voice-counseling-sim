@@ -45,7 +45,13 @@ python utility/check_ffmpeg.py
 
 ご自身の API アカウントが必要です。実際の対話や接続確認では API 利用料金が発生します。モデル名の既定値は設定例であり、アカウント・リージョンで利用できるモデルやデプロイに合わせて変更してください。
 
-**同梱設定の既定の接続先は Azure OpenAI です。** `.env` に OpenAI のキーを記入しただけでは接続先は変わりません。キーやエンドポイントは `.env` に設定し、コミットしないでください。
+**同梱設定の既定の接続先は OpenAI API です。** `.env` に `OPENAI_API_KEY` を記入すると、既定の接続先で利用できます。キーやエンドポイントは `.env` に設定し、コミットしないでください。
+
+### OpenAI API を使う場合（既定）
+
+`.env` に `OPENAI_API_KEY` を記入し、必要に応じて `OPENAI_REALTIME_MODEL`、`OPENAI_STT_MODEL`、`OPENAI_PROMPTING_MODEL`、`OPENAI_TIMING_MODEL`、`OPENAI_SUMMARY_MODEL`、`OPENAI_TEXT_MODEL` を変更します。
+
+Realtime 音声、人間のマイク文字起こし、Prompting、ターンテイク、セッション要約、非 Realtime モードの `conversation_text` は、すべて OpenAI が選択されています。Azure のキーやエンドポイントの設定は不要です。
 
 ### Azure OpenAI を使う場合
 
@@ -63,17 +69,13 @@ python utility/check_ffmpeg.py
 
 AI 同士の Realtime 対話は独立したマイク文字起こしを呼び出しません。すべての使用ルートが Azure であれば、このモードに `OPENAI_API_KEY` は不要です。
 
-### OpenAI を使う場合
-
-`.env` に `OPENAI_API_KEY` を記入し、必要に応じて `OPENAI_REALTIME_MODEL`、`OPENAI_STT_MODEL`、`OPENAI_PROMPTING_MODEL`、`OPENAI_TIMING_MODEL`、`OPENAI_SUMMARY_MODEL` を変更します。
-
-UI の **Session setup** で、次の接続先を OpenAI に変更してからセッションを開始してください。
+UI の **Session setup** で、使用する用途の接続先を Azure OpenAI に変更してからセッションを開始してください。`.env` に Azure の値を記入しただけでは接続先は変わりません。
 
 - Realtime 音声
 - 人間のマイク文字起こし（人間が参加する場合）
 - Prompting、ターンテイク、セッション要約
 
-常に OpenAI を既定にする場合は、[`config/runtime_config.yaml`](config/runtime_config.yaml) の `ai.routes` 内の各 `provider` を `openai` に変更できます。非 Realtime モードで使用する `conversation_text` もここで設定します。`ai.default_provider` だけを変更しても、用途別に指定済みの接続先は変わりません。
+常に Azure OpenAI を既定にする場合は、[`config/runtime_config.yaml`](config/runtime_config.yaml) の `ai.routes` 内の各 `provider` を `azure_eastus2` に変更できます。非 Realtime モードで使用する `conversation_text` もここで設定します。`ai.default_provider` だけを変更しても、用途別に指定済みの接続先は変わりません。
 
 旧テキスト生成・独立 TTS・モデレーション・評価には OpenAI 専用の経路も残っています。それらを利用する場合は、Realtime の接続先とは別に `OPENAI_API_KEY` が必要です。
 

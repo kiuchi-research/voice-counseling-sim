@@ -61,7 +61,7 @@ openai:
     type: audio/pcm
     rate: 24000
 
-# Speech, independent transcription and runtime text routes default to Azure.
+# Speech, independent transcription and runtime text routes default to OpenAI API.
 ai:
   default_provider: openai
   providers:
@@ -76,42 +76,42 @@ ai:
       api_key_env: AZURE_OPENAI_API_KEY
   routes:
     realtime_speech:
-      provider: azure_eastus2
+      provider: openai
       targets:
         openai:
           model: "${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}"
         azure_eastus2:
           deployment: "${AZURE_OPENAI_REALTIME_DEPLOYMENT:-}"
     realtime_transcription:
-      provider: azure_eastus2
+      provider: openai
       targets:
         openai:
           model: "${OPENAI_STT_MODEL:-gpt-4o-transcribe}"
         azure_eastus2:
           deployment: "${AZURE_OPENAI_STT_DEPLOYMENT:-}"
     conversation_text:
-      provider: azure_eastus2
+      provider: openai
       targets:
         openai:
           model: "${OPENAI_TEXT_MODEL:-gpt-5.1}"
         azure_eastus2:
           deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
     turn_timing:
-      provider: azure_eastus2
+      provider: openai
       targets:
         openai:
           model: "${OPENAI_TIMING_MODEL:-gpt-5.4-mini}"
         azure_eastus2:
           deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
     session_summary:
-      provider: azure_eastus2
+      provider: openai
       targets:
         openai:
           model: "${OPENAI_SUMMARY_MODEL:-gpt-5.4-mini}"
         azure_eastus2:
           deployment: "${AZURE_OPENAI_TEXT_DEPLOYMENT:-}"
     prompt_director:
-      provider: azure_eastus2
+      provider: openai
       targets:
         openai:
           model: "${OPENAI_PROMPTING_MODEL:-gpt-5.4-mini}"
